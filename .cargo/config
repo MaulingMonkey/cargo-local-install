@@ -1,0 +1,2 @@
+[alias]
+local-install = "run --quiet --bin cargo-local-install --"

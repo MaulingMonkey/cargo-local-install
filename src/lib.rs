@@ -3,12 +3,28 @@
 #[macro_use] mod macros;
 
 use std::env::ArgsOs;
-use std::fmt::Write;
+use std::fmt::{self, Display, Debug, Formatter, Write};
 use std::ffi::OsString;
 use std::hash::*;
 use std::io;
 use std::path::*;
-use std::process::{Command, exit};
+use std::process::Command;
+
+
+
+/// An opaque `cargo-local-install` error, currently meant for [Display] only.
+pub struct Error(String, Option<Inner>);
+impl Display for Error { fn fmt(&self, fmt: &mut Formatter) -> fmt::Result { write!(fmt, "{}", self.0) } }
+impl Debug   for Error { fn fmt(&self, fmt: &mut Formatter) -> fmt::Result { write!(fmt, "Error({:?})", self.0) } }
+impl std::error::Error for Error {}
+
+enum Inner { Io(io::Error) }
+impl From<io::Error> for Inner { fn from(err: io::Error) -> Self { Inner::Io(err) } }
+
+macro_rules! error {
+    ( None,      $fmt:literal $($tt:tt)* ) => { Error(format!($fmt $($tt)*), None) };
+    ( $err:expr, $fmt:literal $($tt:tt)* ) => { Error(format!($fmt $($tt)*), Some($err.into())) };
+}
 
 
 
@@ -20,7 +36,7 @@ enum LogMode {
 }
 
 /// Run an install after reading the executable name / subcommand.
-/// Will exit(...).
+/// Will `exit(...)`.
 ///
 /// ## Example
 /// ```no_run
@@ -32,6 +48,22 @@ enum LogMode {
 /// }
 /// ```
 pub fn exec_from_args_os_after_exe(args: ArgsOs) -> ! {
+    run_from_args_os_after_exe(args).unwrap_or_else(|err| fatal!("{}", err));
+    std::process::exit(0);
+}
+
+/// Run an install after reading the executable name / subcommand.
+///
+/// ## Example
+/// ```no_run
+/// fn main() {
+///     let mut args = std::env::args_os();
+///     let _cargo_exe  = args.next(); // "cargo.exe"
+///     let _subcommand = args.next(); // "local-install"
+///     cargo_local_install::run_from_args_os_after_exe(args).unwrap();
+/// }
+/// ```
+pub fn run_from_args_os_after_exe(args: ArgsOs) -> Result<(), Error> {
     let mut args = args.peekable();
 
     let mut dry_run     = false;
@@ -49,22 +81,22 @@ pub fn exec_from_args_os_after_exe(args: ArgsOs) -> ! {
         any = true;
         let lossy = arg.to_string_lossy();
         match &*lossy {
-            "--help"        => help(),
-            //"--version"     => version(), // XXX: Conflicts with version selection flag
+            "--help"        => return help(),
+            //"--version"     => return version(), // XXX: Conflicts with version selection flag
 
             // We want to warn if `--locked` wasn't passed, since you probably wanted it
             "--locked"      => locked = Some(true ),
             "--unlocked"    => locked = Some(false), // new to cargo-local-install
 
             // Custom-handled flags
-            "--root"        => root         = Some(PathBuf::from(args.next().unwrap_or_else(|| fatal!("--root must specify a directory")))),
-            "--target-dir"  => target_dir   = Some(canonicalize(PathBuf::from(args.next().unwrap_or_else(|| fatal!("--target-dir must specify a directory"))))),
-            "--path"        => path         = Some(canonicalize(PathBuf::from(args.next().unwrap_or_else(|| fatal!("--path must specify a directory"))))),
-            "--list"        => fatal!("not yet implemented: --list (should this list global cache or local bins?)"),
-            "--no-track"    => fatal!("not yet implemented: --no-track (the entire point of this crate is tracking...)"),
-            "-Z"            => fatal!("not yet implemented: -Z flags"),
-            "--frozen"      => fatal!("not yet implemented: --frozen (last I checked this never worked in cargo install anyways?)"), // https://github.com/rust-lang/cargo/issues/7169#issuecomment-515195574
-            "--offline"     => fatal!("not yet implemented: --offline"),
+            "--root"        => root         = Some(PathBuf::from(args.next().ok_or_else(|| error!(None, "--root must specify a directory"))?)),
+            "--target-dir"  => target_dir   = Some(canonicalize(PathBuf::from(args.next().ok_or_else(|| error!(None, "--target-dir must specify a directory"))?))?),
+            "--path"        => path         = Some(canonicalize(PathBuf::from(args.next().ok_or_else(|| error!(None, "--path must specify a directory"))?))?),
+            "--list"        => return Err(error!(None, "not yet implemented: --list (should this list global cache or local bins?)")),
+            "--no-track"    => return Err(error!(None, "not yet implemented: --no-track (the entire point of this crate is tracking...)")),
+            "-Z"            => return Err(error!(None, "not yet implemented: -Z flags")),
+            "--frozen"      => return Err(error!(None, "not yet implemented: --frozen (last I checked this never worked in cargo install anyways?)")), // https://github.com/rust-lang/cargo/issues/7169#issuecomment-515195574
+            "--offline"     => return Err(error!(None, "not yet implemented: --offline")),
             "--dry-run"     => dry_run = true, // new to cargo-local-install
 
             // pass-through single-arg commands
@@ -91,27 +123,27 @@ pub fn exec_from_args_os_after_exe(args: ArgsOs) -> ! {
             "--index" | "--registry" |
             "--color"
             => {
-                let arg2 = args.next().unwrap_or_else(|| fatal!("{} requires an argument", lossy));
+                let arg2 = args.next().ok_or_else(|| error!(None, "{} requires an argument", lossy))?;
                 options.push((arg, vec![arg2]));
             },
 
             // pass-through multi-arg commands
-            "--features"    => fatal!("not yet implemented: {}", lossy),
-            "--bin"         => fatal!("not yet implemented: {}", lossy),
-            "--example"     => fatal!("not yet implemented: {}", lossy),
+            "--features"    => return Err(error!(None, "not yet implemented: {}", lossy)),
+            "--bin"         => return Err(error!(None, "not yet implemented: {}", lossy)),
+            "--example"     => return Err(error!(None, "not yet implemented: {}", lossy)),
 
             "--" => {
                 crates.extend(args);
                 break;
             },
 
-            flag if flag.starts_with("-") => fatal!("unrecognized flag: {}", flag),
+            flag if flag.starts_with("-") => return Err(error!(None, "unrecognized flag: {}", flag)),
             _krate => crates.push(arg),
         }
     }
     if !any {
         let _ = print_usage(std::io::stderr().lock());
-        exit(1);
+        return Err(error!(None, "no arguments were specified"));
     }
     let quiet   = log_mode == LogMode::Quiet;
     let verbose = log_mode == LogMode::Verbose;
@@ -124,109 +156,127 @@ pub fn exec_from_args_os_after_exe(args: ArgsOs) -> ! {
         options.push(("--locked".into(), Vec::new()));
     }
 
-    if crates.is_empty() { fatal!("no crates specified") }
+    if crates.is_empty() { return Err(error!(None, "no crates specified")) }
 
     let global_dir = {
         let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
-        let mut d = PathBuf::from(std::env::var_os(var).unwrap_or_else(|| fatal!("couldn't determine target dir, {} not set", var)));
+        let mut d = PathBuf::from(std::env::var_os(var).ok_or_else(|| error!(None, "couldn't determine target dir, {} not set", var))?);
         d.push(".cargo");
         d.push("local-install");
         d
     };
     let crates_cache_dir = global_dir.join("crates");
 
-    options.push(("--target-dir".into(), vec![target_dir.map(|td| canonicalize(td)).unwrap_or_else(|| global_dir.join("target")).into()]));
-    if let Some(path) = path { options.push(("--path".into(), vec![canonicalize(path).into()])); }
+    let target_dir = target_dir.map_or_else(|| Ok(global_dir.join("target")), |td| canonicalize(td))?;
+    options.push(("--target-dir".into(), vec![target_dir.into()]));
+    if let Some(path) = path { options.push(("--path".into(), vec![canonicalize(path)?.into()])); }
     options.sort();
     let options = options;
 
     let root = root.unwrap_or_else(|| PathBuf::new());
     let dst_bin = root.join("bin");
-    std::fs::create_dir_all(&dst_bin).unwrap_or_else(|err| fatal!("unable to create {}: {}", dst_bin.display(), err));
+    std::fs::create_dir_all(&dst_bin).map_err(|err| error!(err, "unable to create {}: {}", dst_bin.display(), err))?;
 
     for krate in crates.into_iter() {
-        let mut trace = format!("cargo install");
-        let mut cmd = Command::new("cargo");
-        cmd.arg("install");
-        for (flag, args) in options.iter() {
-            write!(&mut trace, " {}", flag.to_str().unwrap()).unwrap();
-            cmd.arg(flag);
-            for arg in args.into_iter() {
-                write!(&mut trace, " {:?}", arg).unwrap();
-                cmd.arg(arg);
-            }
-        }
-
-        let hash = {
-            // real trace will have "--root ...", but that depends on hash!
-            let trace_for_hash = format!("{} -- {}", trace, krate.to_string_lossy());
-            #[allow(deprecated)] let mut hasher = std::hash::SipHasher::new();
-            trace_for_hash.hash(&mut hasher);
-            format!("{:016x}", hasher.finish())
-        };
-
-        let krate_build_dir = crates_cache_dir.join(hash);
-        write!(&mut trace, " --root {:?}", krate_build_dir.display()).unwrap();
-        cmd.arg("--root").arg(&krate_build_dir);
-
-        trace.push_str(" -- ");
-        trace.push_str(&krate.to_string_lossy());
-        cmd.arg("--");
-        cmd.arg(krate);
-
-        if verbose { statusln!("Running", "`{}`", trace) }
-        if !dry_run {
-            let status = cmd.status().unwrap_or_else(|err| fatal!("failed to execute {}: {}", trace, err));
-            match status.code() {
-                Some(0) => { if verbose { statusln!("Succeeded", "`{}`", trace) } },
-                Some(n) => fatal!("{} failed (exit code {})", trace, n),
-                None    => fatal!("{} failed (signal)", trace),
-            }
-        } else { // dry_run
-            statusln!("Skipped", "`{}` (--dry-run)", trace);
-            continue; // XXX: Would be nice to log copied bins, but without building them we don't know what they are
-        }
-
-        let src_bin_path = krate_build_dir.join("bin");
-        let src_bins = src_bin_path.read_dir().unwrap_or_else(|err| fatal!("unable to enumerate source bins at {}: {}", src_bin_path.display(), err));
-        for src_bin in src_bins {
-            let src_bin = src_bin.unwrap_or_else(|err| fatal!("error enumerating source bins at {}: {}", src_bin_path.display(), err));
-            let dst_bin = dst_bin.join(src_bin.file_name());
-            let file_type = src_bin.file_type().unwrap_or_else(|err| fatal!("error determining file type for {}: {}", src_bin.path().display(), err));
-            if !file_type.is_file() { continue }
-            let src_bin = src_bin.path();
-
-            if !quiet { statusln!("Replacing", "`{}`", dst_bin.display()) }
-            #[cfg(windows)] {
-                let _ = std::fs::remove_file(&dst_bin);
-                if let Err(err) = std::os::windows::fs::symlink_file(&src_bin, &dst_bin) {
-                    if !quiet { warnln!("Unable link `{}` to `{}`: {}", dst_bin.display(), src_bin.display(), err) }
-                } else {
-                    if !quiet { statusln!("Linked", "`{}` to `{}`", dst_bin.display(), src_bin.display()) }
-                    continue
-                }
-            }
-            #[cfg(unix)] {
-                let _ = std::fs::remove_file(&dst_bin);
-                if let Err(err) = std::os::unix::fs::symlink(&src_bin, &dst_bin) {
-                    if !quiet { warnln!("Unable link `{}` to `{}`: {}", dst_bin.display(), src_bin.display(), err) }
-                } else {
-                    if !quiet { statusln!("Linked", "`{}` to `{}`", dst_bin.display(), src_bin.display()) }
-                    continue
-                }
-            }
-            std::fs::copy(&src_bin, &dst_bin).unwrap_or_else(|err| fatal!("error replacing `{}` with `{}`: {}", dst_bin.display(), src_bin.display(), err));
-            if !quiet { statusln!("Replaced", "`{}` with `{}`", dst_bin.display(), src_bin.display()) }
-        }
+        let context = Context { dry_run, quiet, verbose, crates_cache_dir: crates_cache_dir.as_path(), dst_bin: dst_bin.as_path() };
+        install_crate(context, krate, options.iter())?;
     }
 
     warnln!("be sure to add `{}` to your PATH to be able to run the installed binaries", dst_bin.display());
-    exit(0);
+    Ok(())
 }
 
-fn help() {
-    let _ = print_usage(&mut std::io::stdout().lock());
-    exit(0);
+struct Context<'a> {
+    pub dry_run:            bool,
+    pub quiet:              bool,
+    pub verbose:            bool,
+    pub crates_cache_dir:   &'a Path,
+    pub dst_bin:            &'a Path,
+}
+
+fn install_crate<'o, Opts: Iterator<Item = &'o (OsString, Vec<OsString>)>>(context: Context, krate: OsString, options: Opts) -> Result<(), Error> {
+    let Context { dry_run, quiet, verbose, crates_cache_dir, dst_bin } = context;
+
+    let mut trace = format!("cargo install");
+    let mut cmd = Command::new("cargo");
+    cmd.arg("install");
+    for (flag, args) in options {
+        write!(&mut trace, " {}", flag.to_str().unwrap()).unwrap();
+        cmd.arg(flag);
+        for arg in args.into_iter() {
+            write!(&mut trace, " {:?}", arg).unwrap();
+            cmd.arg(arg);
+        }
+    }
+
+    let hash = {
+        // real trace will have "--root ...", but that depends on hash!
+        let trace_for_hash = format!("{} -- {}", trace, krate.to_string_lossy());
+        #[allow(deprecated)] let mut hasher = std::hash::SipHasher::new();
+        trace_for_hash.hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
+    };
+
+    let krate_build_dir = crates_cache_dir.join(hash);
+    write!(&mut trace, " --root {:?}", krate_build_dir.display()).unwrap();
+    cmd.arg("--root").arg(&krate_build_dir);
+
+    trace.push_str(" -- ");
+    trace.push_str(&krate.to_string_lossy());
+    cmd.arg("--");
+    cmd.arg(krate);
+
+    if verbose { statusln!("Running", "`{}`", trace) }
+    if !dry_run {
+        let status = cmd.status().map_err(|err| error!(err, "failed to execute {}: {}", trace, err))?;
+        match status.code() {
+            Some(0) => { if verbose { statusln!("Succeeded", "`{}`", trace) } },
+            Some(n) => return Err(error!(None, "{} failed (exit code {})", trace, n)),
+            None    => return Err(error!(None, "{} failed (signal)", trace)),
+        }
+    } else { // dry_run
+        statusln!("Skipped", "`{}` (--dry-run)", trace);
+        return Ok(()); // XXX: Would be nice to log copied bins, but without building them we don't know what they are
+    }
+
+    let src_bin_path = krate_build_dir.join("bin");
+    let src_bins = src_bin_path.read_dir().map_err(|err| error!(err, "unable to enumerate source bins at {}: {}", src_bin_path.display(), err))?;
+    for src_bin in src_bins {
+        let src_bin = src_bin.map_err(|err| error!(err, "error enumerating source bins at {}: {}", src_bin_path.display(), err))?;
+        let dst_bin = dst_bin.join(src_bin.file_name());
+        let file_type = src_bin.file_type().map_err(|err| error!(err, "error determining file type for {}: {}", src_bin.path().display(), err))?;
+        if !file_type.is_file() { continue }
+        let src_bin = src_bin.path();
+
+        if !quiet { statusln!("Replacing", "`{}`", dst_bin.display()) }
+        #[cfg(windows)] {
+            let _ = std::fs::remove_file(&dst_bin);
+            if let Err(err) = std::os::windows::fs::symlink_file(&src_bin, &dst_bin) {
+                if !quiet { warnln!("Unable link `{}` to `{}`: {}", dst_bin.display(), src_bin.display(), err) }
+            } else {
+                if !quiet { statusln!("Linked", "`{}` to `{}`", dst_bin.display(), src_bin.display()) }
+                continue
+            }
+        }
+        #[cfg(unix)] {
+            let _ = std::fs::remove_file(&dst_bin);
+            if let Err(err) = std::os::unix::fs::symlink(&src_bin, &dst_bin) {
+                if !quiet { warnln!("Unable link `{}` to `{}`: {}", dst_bin.display(), src_bin.display(), err) }
+            } else {
+                if !quiet { statusln!("Linked", "`{}` to `{}`", dst_bin.display(), src_bin.display()) }
+                continue
+            }
+        }
+        std::fs::copy(&src_bin, &dst_bin).map_err(|err| error!(err, "error replacing `{}` with `{}`: {}", dst_bin.display(), src_bin.display(), err))?;
+        if !quiet { statusln!("Replaced", "`{}` with `{}`", dst_bin.display(), src_bin.display()) }
+    }
+
+    warnln!("be sure to add `{}` to your PATH to be able to run the installed binaries", dst_bin.display());
+    Ok(())
+}
+
+fn help() -> Result<(), Error> {
+    print_usage(&mut std::io::stdout().lock()).map_err(|err| error!(err, "unable to write help text to stdout: {}", err))
 }
 
 fn print_usage(mut o: impl io::Write) -> io::Result<()> {
@@ -299,9 +349,9 @@ fn version() {
     println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
 }
 
-fn canonicalize(path: impl AsRef<Path>) -> PathBuf {
+fn canonicalize(path: impl AsRef<Path>) -> Result<PathBuf, Error> {
     let path = path.as_ref();
-    let path = std::fs::canonicalize(path).unwrap_or_else(|err| fatal!("unable to canonicalize {}: {}", path.display(), err));
+    let path = std::fs::canonicalize(path).map_err(|err| error!(err, "unable to canonicalize {}: {}", path.display(), err))?;
     let mut o = PathBuf::new();
     for component in path.components() {
         if let Component::Prefix(pre) = component {
@@ -313,5 +363,5 @@ fn canonicalize(path: impl AsRef<Path>) -> PathBuf {
             o.push(component);
         }
     }
-    o
+    Ok(o)
 }

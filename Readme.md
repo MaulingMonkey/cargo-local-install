@@ -10,18 +10,20 @@ Wraps `cargo install` for better local, non-conflicting installation
 [![License](https://img.shields.io/crates/l/cargo_local_install.svg)](https://github.com/MaulingMonkey/cargo-local-install)
 [![Build Status](https://travis-ci.com/MaulingMonkey/cargo-local-install.svg?branch=master)](https://travis-ci.com/MaulingMonkey/cargo-local-install)
 
-
+Want to script `cargo install cargo-web --version 0.6 --root my-project` to avoid version conflicts with other projects?<br>
+Hate having a million copies of `cargo-web 0.6.26` and waiting for it to build if you go down that route?<br>
+`cargo-local-install` now has your back, and will create symlinks into a global cache of reusable bins:
 
 <h2 name="quickstart">Quickstart</h2>
 
 ```sh
-cargo install cargo-local-install
-# slow first builds
-cargo local-install --locked cargo-web --version 0.6 --root project-a # creates project-a/bin/cargo-web.exe
-cargo local-install --locked cargo-web --version 0.5 --root project-b # creates project-b/bin/cargo-web.exe
-# fast cached builds
-cargo local-install --locked cargo-web --version 0.6 --root project-c # creates project-c/bin/cargo-web.exe
-cargo local-install --locked cargo-web --version 0.6                  # creates bin/cargo-web.exe
+cargo install cargo-local-install # <400 LOC of rust with 0 dependencies, builds in < 3 seconds on my machine
+# slow first builds that create new exes
+cargo local-install --locked cargo-web --version "^0.6" --root project-a # symlinks project-a/bin/cargo-web.exe
+cargo local-install --locked cargo-web --version "^0.5" --root project-b # symlinks project-b/bin/cargo-web.exe
+# fast cached builds that reuse existing exes
+cargo local-install --locked cargo-web --version "^0.6" --root project-c # symlinks project-c/bin/cargo-web.exe
+cargo local-install --locked cargo-web --version "^0.6"                  # symlinks bin/cargo-web.exe
 ```
 
 Options are broadly similar to `cargo install`, with a few caveats:

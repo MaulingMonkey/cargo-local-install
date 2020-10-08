@@ -52,6 +52,31 @@ Options are broadly similar to `cargo install`, with a few caveats:
 
 
 
+<h2 name="alternative-sccache">Alternative: sccache</h2>
+
+* [github](https://github.com/mozilla/sccache)
+* **Pro**: Can be combined with `cargo-local-install`, no need to pick and choose!
+* **Pro**: Cache intermediate built crates for everything, not just installed bins
+* **Pro**: Network cache options to share with others
+* **Con**: Hundreds of dependencies if you're a weirdo who installs sccache from source
+* **Con**: Lots of cache misses, at least when using `cargo install ...`
+
+Some concrete numbers from some local testing:
+
+| with sccache configured for local disk    | time   | notes |
+| ----------------------------------------- | ------ | ----- |
+| `cargo install cargo-web --root a`        | 3m 38s | cleanish cache, no downloads
+| `cargo install cargo-web --root a`        | ~ 1 s  | noop by `cargo install`
+| `cargo install cargo-web --root b`        | 1m 21s | many cache failures based on lurching progress speed?
+
+| with local-install (no sccache)           | time   | notes |
+| ----------------------------------------- | ------ | ----- |
+| `cargo local-install cargo-web --root c`  | 3m 03s | clean cache, no downloads of deps
+| `cargo local-install cargo-web --root c`  | ~ 1 s  | noop by `cargo install`
+| `cargo local-install cargo-web --root d`  | ~ 1 s  | trivial cache hit by `cargo local-install`
+
+
+
 <h2 name="license">License</h2>
 
 Licensed under either of

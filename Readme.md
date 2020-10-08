@@ -10,6 +10,30 @@ Wraps `cargo install` for better local, non-conflicting installation
 [![License](https://img.shields.io/crates/l/cargo-local-install.svg)](https://github.com/MaulingMonkey/cargo-local-install)
 [![Build Status](https://travis-ci.com/MaulingMonkey/cargo-local-install.svg?branch=master)](https://travis-ci.com/MaulingMonkey/cargo-local-install)
 
+
+
+<h2 name="quickstart">Quickstart</h2>
+
+```sh
+cargo install cargo-local-install
+# slow first builds
+cargo local-install --locked cargo-web --version 0.6 --root project-a # creates project-a/bin/cargo-web.exe
+cargo local-install --locked cargo-web --version 0.5 --root project-b # creates project-b/bin/cargo-web.exe
+# fast cached builds
+cargo local-install --locked cargo-web --version 0.6 --root project-c # creates project-c/bin/cargo-web.exe
+cargo local-install --locked cargo-web --version 0.6                  # creates bin/cargo-web.exe
+```
+
+Options are broadly similar to `cargo install`, with a few caveats:
+* `--locked` is *strongly* encouraged (warns by default unless it or `--unlocked` is used)
+* `--list`, `--no-track`, `--features`, `--bin`, and `--example` are not supported
+* `--frozen` and `--offline` are not supported (don't think they worked for `cargo install` either though!)
+* `-Z <FLAG>` is not supported
+
+
+
+<h2 name="what-why">What? Why?</h2>
+
 `cargo install` is great but suffers a few drawbacks:
 *   The global `~/.cargo/bin` directory can contain only a single installed
     version of a package at a time - if you've got one project relying on
@@ -22,7 +46,7 @@ Wraps `cargo install` for better local, non-conflicting installation
 
 `cargo local-install` attempts to solve these problems:
 *   (Ab)uses `--target-dir` to share built dependencies.
-*   Creates a global cache of binaries, but installs a link/copy in `./bin` by default.
+*   Creates a global cache of binaries, but installs a link or copy in `./bin` by default.
 
 
 

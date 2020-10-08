@@ -7,7 +7,7 @@ Wraps `cargo install` for better local, non-conflicting installation
 [![docs.rs](https://docs.rs/cargo-local-install/badge.svg)](https://docs.rs/cargo-local-install)
 [![%23![forbid(unsafe_code)]](https://img.shields.io/github/search/MaulingMonkey/cargo-local-install/unsafe%2bextension%3Ars?color=green&label=%23![forbid(unsafe_code)])](https://github.com/MaulingMonkey/cargo-local-install/search?q=forbid%28unsafe_code%29+extension%3Ars)
 [![rust: stable](https://img.shields.io/badge/rust-stable-yellow.svg)](https://gist.github.com/MaulingMonkey/c81a9f18811079f19326dac4daa5a359#minimum-supported-rust-versions-msrv)
-[![License](https://img.shields.io/crates/l/cargo-local-install.svg)](https://github.com/MaulingMonkey/cargo-local-install)
+[![License](https://img.shields.io/crates/l/cargo_local_install.svg)](https://github.com/MaulingMonkey/cargo-local-install)
 [![Build Status](https://travis-ci.com/MaulingMonkey/cargo-local-install.svg?branch=master)](https://travis-ci.com/MaulingMonkey/cargo-local-install)
 
 

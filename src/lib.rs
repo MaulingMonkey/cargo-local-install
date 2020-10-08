@@ -201,7 +201,7 @@ pub fn exec_from_args_os_after_exe(args: ArgsOs) -> ! {
             }
             #[cfg(unix)] {
                 let _ = std::fs::remove_file(&dst_bin);
-                if let Err(err) = std::os::unix::fs::symlink(&src_bin, &dst_bin).unwrap_or_else(|err| fatal!("error symlinking {} at {}: {}", src_bin.display(), dst_bin.display(), err)) {
+                if let Err(err) = std::os::unix::fs::symlink(&src_bin, &dst_bin) {
                     if !quiet { warnln!("Unable link `{}` to `{}`: {}", dst_bin.display(), src_bin.display(), err) }
                 } else {
                     if !quiet { statusln!("Linked", "`{}` to `{}`", dst_bin.display(), src_bin.display()) }

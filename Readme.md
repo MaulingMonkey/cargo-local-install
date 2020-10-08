@@ -61,7 +61,7 @@ Options are broadly similar to `cargo install`, with a few caveats:
 * **Con**: Hundreds of dependencies if you're a weirdo who installs sccache from source
 * **Con**: Lots of cache misses, at least when using `cargo install ...`
 
-Some concrete numbers from some local testing:
+Some concrete numbers from some local testing with a [global .cargo/config rustc-wrapper configured](https://github.com/mozilla/sccache#usage)
 
 | with sccache configured for local disk    | time   | notes |
 | ----------------------------------------- | ------ | ----- |

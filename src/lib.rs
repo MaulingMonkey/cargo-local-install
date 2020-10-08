@@ -34,6 +34,7 @@ enum LogMode {
 pub fn exec_from_args_os_after_exe(args: ArgsOs) -> ! {
     let mut args = args.peekable();
 
+    let mut dry_run     = false;
     let mut log_mode    = LogMode::Normal;
     let mut locked      = None;
     let mut root        = None;
@@ -53,7 +54,7 @@ pub fn exec_from_args_os_after_exe(args: ArgsOs) -> ! {
 
             // We want to warn if `--locked` wasn't passed, since you probably wanted it
             "--locked"      => locked = Some(true ),
-            "--unlocked"    => locked = Some(false),
+            "--unlocked"    => locked = Some(false), // new to cargo-local-install
 
             // Custom-handled flags
             "--root"        => root         = Some(PathBuf::from(args.next().unwrap_or_else(|| fatal!("--root must specify a directory")))),
@@ -64,6 +65,7 @@ pub fn exec_from_args_os_after_exe(args: ArgsOs) -> ! {
             "-Z"            => fatal!("not yet implemented: -Z flags"),
             "--frozen"      => fatal!("not yet implemented: --frozen (last I checked this never worked in cargo install anyways?)"), // https://github.com/rust-lang/cargo/issues/7169#issuecomment-515195574
             "--offline"     => fatal!("not yet implemented: --offline"),
+            "--dry-run"     => dry_run = true, // new to cargo-local-install
 
             // pass-through single-arg commands
             "-q" | "--quiet" => {
@@ -173,11 +175,16 @@ pub fn exec_from_args_os_after_exe(args: ArgsOs) -> ! {
         cmd.arg(krate);
 
         if verbose { statusln!("Running", "`{}`", trace) }
-        let status = cmd.status().unwrap_or_else(|err| fatal!("failed to execute {}: {}", trace, err));
-        match status.code() {
-            Some(0) => { if verbose { statusln!("Succeeded", "`{}`", trace) } },
-            Some(n) => fatal!("{} failed (exit code {})", trace, n),
-            None    => fatal!("{} failed (signal)", trace),
+        if !dry_run {
+            let status = cmd.status().unwrap_or_else(|err| fatal!("failed to execute {}: {}", trace, err));
+            match status.code() {
+                Some(0) => { if verbose { statusln!("Succeeded", "`{}`", trace) } },
+                Some(n) => fatal!("{} failed (exit code {})", trace, n),
+                None    => fatal!("{} failed (signal)", trace),
+            }
+        } else { // dry_run
+            statusln!("Skipped", "`{}` (--dry-run)", trace);
+            continue; // XXX: Would be nice to log copied bins, but without building them we don't know what they are
         }
 
         let src_bin_path = krate_build_dir.join("bin");
@@ -264,6 +271,7 @@ fn print_usage(mut o: impl io::Write) -> io::Result<()> {
     // writeln!(o, "        --offline                                    Run without accessing the network")?; // not supported
     // CUSTOM FLAGS:
     writeln!(o, "        --unlocked                                   Don't require an up-to-date Cargo.lock")?;
+    writeln!(o, "        --dry-run                                    Print `cargo install ...` spam but don't actually install")?;
     // writeln!(o, "    -Z <FLAG>...")?; // nyi
     writeln!(o)?;
     writeln!(o, "ARGS:")?;

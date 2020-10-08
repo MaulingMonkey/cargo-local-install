@@ -55,6 +55,7 @@
         { "label": "2", "dependsOn": [
             "cargo test --frozen",
             "cargo local-install --help",
+            "cargo local-install cargo-web --version \"^0.6\" --dry-run",
         ]},
         {
             "label":            "cargo test --frozen",
@@ -67,6 +68,12 @@
             "command":          "cargo local-install --help",
             "presentation":     { "group": "2" },
             "problemMatcher":   { "base": "$rustc", "owner": "cargo local-install --help", "source": "cargo local-install --help" },
+        },
+        {
+            "label":            "cargo local-install cargo-web --version \"^0.6\" --dry-run",
+            "command":          "cargo local-install cargo-web --version \"^0.6\" --dry-run",
+            "presentation":     { "group": "2" },
+            "problemMatcher":   { "base": "$rustc", "owner": "cargo local-install cargo-web --version \"^0.6\" --dry-run", "source": "cargo local-install cargo-web --version \"^0.6\" --dry-run" },
         },
 
 

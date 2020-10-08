@@ -296,7 +296,14 @@ fn canonicalize(path: impl AsRef<Path>) -> PathBuf {
     let path = std::fs::canonicalize(path).unwrap_or_else(|err| fatal!("unable to canonicalize {}: {}", path.display(), err));
     let mut o = PathBuf::new();
     for component in path.components() {
-        o.push(component);
+        if let Component::Prefix(pre) = component {
+            match pre.kind() {
+                Prefix::VerbatimDisk(disk)  => o.push(format!("{}:", disk as char)),
+                _other                      => o.push(component),
+            }
+        } else {
+            o.push(component);
+        }
     }
     o
 }

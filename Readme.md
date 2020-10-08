@@ -46,7 +46,7 @@ Options are broadly similar to `cargo install`, with a few caveats:
 
 `cargo local-install` attempts to solve these problems:
 *   (Ab)uses `--target-dir` to share built dependencies.
-*   Creates a global cache of binaries, but installs a link or copy in `./bin` by default.
+*   Creates a global cache of binaries, but installs a symlink (or copy if that fails) in `./bin` by default.
 
 
 

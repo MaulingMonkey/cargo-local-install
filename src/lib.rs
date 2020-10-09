@@ -4,7 +4,7 @@
 
 use std::env::ArgsOs;
 use std::fmt::{self, Display, Debug, Formatter, Write};
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::hash::*;
 use std::io;
 use std::path::*;
@@ -64,6 +64,42 @@ pub fn exec_from_args_os_after_exe(args: ArgsOs) -> ! {
 /// }
 /// ```
 pub fn run_from_args_os_after_exe(args: ArgsOs) -> Result<(), Error> {
+    run_from_strs(args)
+}
+
+/// Run an install based on string arguments.
+///
+/// ## Example
+/// ```no_run
+/// # fn a() -> Result<(), Box<dyn std::error::Error>> {
+/// # use std::ffi::*;
+/// # use cargo_local_install::run_from_strs;
+/// // &str s
+/// run_from_strs(["cargo-web", "--version", "^0.6"].iter())?;
+/// run_from_strs(["cargo-web", "--version", "^0.6"].into_iter())?;
+///
+/// // String s
+/// let s = ["cargo-web", "--version", "^0.6"];
+/// let s = s.iter().copied().map(String::from).collect::<Vec<String>>();
+/// run_from_strs(s.iter())?;
+/// run_from_strs(s.into_iter())?;
+/// 
+/// // &OsStr s
+/// let os = ["cargo-web", "--version", "^0.6"];
+/// let os = os.iter().map(OsStr::new).collect::<Vec<&OsStr>>();
+/// run_from_strs(os.iter())?;
+/// run_from_strs(os.into_iter())?;
+/// 
+/// // OsString s
+/// let os = ["cargo-web", "--version", "^0.6"];
+/// let os = os.iter().map(OsString::from).collect::<Vec<OsString>>();
+/// run_from_strs(os.iter())?;
+/// run_from_strs(os.into_iter())?;
+/// # Ok(())
+/// # }
+/// ```
+pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsStr>>(args: Args) -> Result<(), Error> {
+    // XXX: I'll likely relax either "Into<OsString>" or "AsRef<OsStr>", but I haven't decided which just yet.
     let mut args = args.peekable();
 
     let mut dry_run     = false;
@@ -78,6 +114,7 @@ pub fn run_from_args_os_after_exe(args: ArgsOs) -> Result<(), Error> {
 
     let mut any = false;
     while let Some(arg) = args.next() {
+        let arg = arg.into();
         any = true;
         let lossy = arg.to_string_lossy();
         match &*lossy {
@@ -89,9 +126,9 @@ pub fn run_from_args_os_after_exe(args: ArgsOs) -> Result<(), Error> {
             "--unlocked"    => locked = Some(false), // new to cargo-local-install
 
             // Custom-handled flags
-            "--root"        => root         = Some(PathBuf::from(args.next().ok_or_else(|| error!(None, "--root must specify a directory"))?)),
-            "--target-dir"  => target_dir   = Some(canonicalize(PathBuf::from(args.next().ok_or_else(|| error!(None, "--target-dir must specify a directory"))?))?),
-            "--path"        => path         = Some(canonicalize(PathBuf::from(args.next().ok_or_else(|| error!(None, "--path must specify a directory"))?))?),
+            "--root"        => root         = Some(PathBuf::from(args.next().ok_or_else(|| error!(None, "--root must specify a directory"))?.into())),
+            "--target-dir"  => target_dir   = Some(canonicalize(PathBuf::from(args.next().ok_or_else(|| error!(None, "--target-dir must specify a directory"))?.into()))?),
+            "--path"        => path         = Some(canonicalize(PathBuf::from(args.next().ok_or_else(|| error!(None, "--path must specify a directory"))?.into()))?),
             "--list"        => return Err(error!(None, "not yet implemented: --list (should this list global cache or local bins?)")),
             "--no-track"    => return Err(error!(None, "not yet implemented: --no-track (the entire point of this crate is tracking...)")),
             "-Z"            => return Err(error!(None, "not yet implemented: -Z flags")),
@@ -123,7 +160,7 @@ pub fn run_from_args_os_after_exe(args: ArgsOs) -> Result<(), Error> {
             "--index" | "--registry" |
             "--color"
             => {
-                let arg2 = args.next().ok_or_else(|| error!(None, "{} requires an argument", lossy))?;
+                let arg2 = args.next().ok_or_else(|| error!(None, "{} requires an argument", lossy))?.into();
                 options.push((arg, vec![arg2]));
             },
 
@@ -133,7 +170,7 @@ pub fn run_from_args_os_after_exe(args: ArgsOs) -> Result<(), Error> {
             "--example"     => return Err(error!(None, "not yet implemented: {}", lossy)),
 
             "--" => {
-                crates.extend(args);
+                crates.extend(args.map(|a| a.into()));
                 break;
             },
 

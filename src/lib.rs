@@ -3,12 +3,12 @@
 #[macro_use] mod macros;
 
 use std::env::ArgsOs;
-use std::fmt::{self, Display, Debug, Formatter, Write};
+use std::fmt::{self, Display, Debug, Formatter, Write as _};
 use std::ffi::{OsStr, OsString};
 use std::hash::*;
-use std::io;
+use std::io::{self, Read, Write as _};
 use std::path::*;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 
 
@@ -103,6 +103,7 @@ pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsS
     let mut args = args.peekable();
 
     let mut dry_run     = false;
+    let mut path_warning= true;
     let mut log_mode    = LogMode::Normal;
     let mut locked      = None;
     let mut root        = None;
@@ -135,6 +136,7 @@ pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsS
             "--frozen"      => return Err(error!(None, "not yet implemented: --frozen (last I checked this never worked in cargo install anyways?)")), // https://github.com/rust-lang/cargo/issues/7169#issuecomment-515195574
             "--offline"     => return Err(error!(None, "not yet implemented: --offline")),
             "--dry-run"     => dry_run = true, // new to cargo-local-install
+            "--no-path-warning" => path_warning = false, // new to cargo-local-install
 
             // pass-through single-arg commands
             "-q" | "--quiet" => {
@@ -219,7 +221,7 @@ pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsS
         install_crate(context, krate, options.iter())?;
     }
 
-    warnln!("be sure to add `{}` to your PATH to be able to run the installed binaries", dst_bin.display());
+    if path_warning { warnln!("be sure to add `{}` to your PATH to be able to run the installed binaries", dst_bin.display()); }
     Ok(())
 }
 
@@ -258,6 +260,9 @@ fn install_crate<'o, Opts: Iterator<Item = &'o (OsString, Vec<OsString>)>>(conte
     write!(&mut trace, " --root {:?}", krate_build_dir.display()).unwrap();
     cmd.arg("--root").arg(&krate_build_dir);
 
+    write!(&mut trace, " --color always").unwrap();
+    cmd.arg("--color").arg("always");
+
     trace.push_str(" -- ");
     trace.push_str(&krate.to_string_lossy());
     cmd.arg("--");
@@ -265,7 +270,12 @@ fn install_crate<'o, Opts: Iterator<Item = &'o (OsString, Vec<OsString>)>>(conte
 
     if verbose { statusln!("Running", "`{}`", trace) }
     if !dry_run {
-        let status = cmd.status().map_err(|err| error!(err, "failed to execute {}: {}", trace, err))?;
+        cmd.stderr(Stdio::piped());
+        let mut cmd = cmd.spawn().map_err(|err| error!(err, "failed to spawn {}: {}", trace, err))?;
+        let stderr_thread = cmd.stderr.take().map(|stderr| std::thread::spawn(|| filter_stderr(stderr)));
+        let status = cmd.wait();
+        let _stderr_thread = stderr_thread.map(|t| t.join());
+        let status = status.map_err(|err| error!(err, "failed to execute {}: {}", trace, err))?;
         match status.code() {
             Some(0) => { if verbose { statusln!("Succeeded", "`{}`", trace) } },
             Some(n) => return Err(error!(None, "{} failed (exit code {})", trace, n)),
@@ -308,8 +318,57 @@ fn install_crate<'o, Opts: Iterator<Item = &'o (OsString, Vec<OsString>)>>(conte
         if !quiet { statusln!("Replaced", "`{}` with `{}`", dst_bin.display(), src_bin.display()) }
     }
 
-    warnln!("be sure to add `{}` to your PATH to be able to run the installed binaries", dst_bin.display());
     Ok(())
+}
+
+/// Filters out bad warnings like:
+/// "\u{1b}[0m\u{1b}[0m\u{1b}[1m\u{1b}[33mwarning\u{1b}[0m\u{1b}[1m:\u{1b}[0m be sure to add `C:\\Users\\Name\\.cargo\\local-install\\crates\\e5ce6d367e4d6f3f\\bin` to your PATH to be able to run the installed binaries"
+fn filter_stderr(mut input: std::process::ChildStderr) -> io::Result<()> {
+    let mut output = std::io::stderr();
+    let mut pending = Vec::new();
+    let mut scratch = vec![0u8; 4096];
+    let mut mid_line = false;
+
+    const BAD_WARNING_PRE_COLOR : &'static [u8] = b"\x1B[0m\x1B[0m\x1B[1m\x1B[33mwarning\x1B[0m\x1B[1m:\x1B[0m be sure to add `";
+    const BAD_WARNING_PRE_ASCII : &'static [u8] = b"warning: be sure to add `";
+
+    loop {
+        let n = input.read(&mut scratch[..])?;
+        if n == 0 {
+            // pipe closed
+            if mid_line || !(pending.starts_with(BAD_WARNING_PRE_COLOR) || pending.starts_with(BAD_WARNING_PRE_ASCII)) {
+                output.write_all(&pending[..])?;
+            }
+            output.flush()?;
+            return Ok(())
+        }
+        pending.extend(&scratch[..n]);
+
+        let mut process = &pending[..];
+        while let Some(eol) = process.iter().copied().position(|ch| ch == b'\n') {
+            if mid_line || !(process.starts_with(BAD_WARNING_PRE_COLOR) || process.starts_with(BAD_WARNING_PRE_ASCII)) {
+                output.write_all(&process[..(eol+1)])?;
+                output.flush()?;
+            }
+            process = &process[(eol+1)..];
+            mid_line = false;
+        }
+
+        let n1 = BAD_WARNING_PRE_COLOR.len().min(process.len());
+        let n2 = BAD_WARNING_PRE_ASCII.len().min(process.len());
+        if (&BAD_WARNING_PRE_COLOR[..n1] != &process[..n1]) && (&BAD_WARNING_PRE_ASCII[..n2] != &process[..n2]) {
+            output.write_all(process)?;
+            output.flush()?;
+            mid_line = true;
+            process = &[];
+        }
+
+        let end = pending.len();
+        let start = end - process.len();
+        let n = process.len();
+        pending.copy_within(start..end, 0);
+        pending.resize(n, 0);
+    }
 }
 
 fn help() -> Result<(), Error> {
@@ -359,6 +418,7 @@ fn print_usage(mut o: impl io::Write) -> io::Result<()> {
     // CUSTOM FLAGS:
     writeln!(o, "        --unlocked                                   Don't require an up-to-date Cargo.lock")?;
     writeln!(o, "        --dry-run                                    Print `cargo install ...` spam but don't actually install")?;
+    writeln!(o, "        --no-path-warning                            Don't remind the user to add `bin` to their PATH")?;
     // writeln!(o, "    -Z <FLAG>...")?; // nyi
     writeln!(o)?;
     writeln!(o, "ARGS:")?;

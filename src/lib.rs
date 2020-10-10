@@ -6,7 +6,7 @@ use std::env::ArgsOs;
 use std::fmt::{self, Display, Debug, Formatter, Write as _};
 use std::ffi::{OsStr, OsString};
 use std::hash::*;
-use std::io::{self, Read, Write as _};
+use std::io::{self, BufRead, BufReader};
 use std::path::*;
 use std::process::{Command, Stdio};
 
@@ -323,52 +323,16 @@ fn install_crate<'o, Opts: Iterator<Item = &'o (OsString, Vec<OsString>)>>(conte
 
 /// Filters out bad warnings like:
 /// "\u{1b}[0m\u{1b}[0m\u{1b}[1m\u{1b}[33mwarning\u{1b}[0m\u{1b}[1m:\u{1b}[0m be sure to add `C:\\Users\\Name\\.cargo\\local-install\\crates\\e5ce6d367e4d6f3f\\bin` to your PATH to be able to run the installed binaries"
-fn filter_stderr(mut input: std::process::ChildStderr) -> io::Result<()> {
-    let mut output = std::io::stderr();
-    let mut pending = Vec::new();
-    let mut scratch = vec![0u8; 4096];
-    let mut mid_line = false;
-
-    const BAD_WARNING_PRE_COLOR : &'static [u8] = b"\x1B[0m\x1B[0m\x1B[1m\x1B[33mwarning\x1B[0m\x1B[1m:\x1B[0m be sure to add `";
-    const BAD_WARNING_PRE_ASCII : &'static [u8] = b"warning: be sure to add `";
-
-    loop {
-        let n = input.read(&mut scratch[..])?;
-        if n == 0 {
-            // pipe closed
-            if mid_line || !(pending.starts_with(BAD_WARNING_PRE_COLOR) || pending.starts_with(BAD_WARNING_PRE_ASCII)) {
-                output.write_all(&pending[..])?;
-            }
-            output.flush()?;
-            return Ok(())
-        }
-        pending.extend(&scratch[..n]);
-
-        let mut process = &pending[..];
-        while let Some(eol) = process.iter().copied().position(|ch| ch == b'\n') {
-            if mid_line || !(process.starts_with(BAD_WARNING_PRE_COLOR) || process.starts_with(BAD_WARNING_PRE_ASCII)) {
-                output.write_all(&process[..(eol+1)])?;
-                output.flush()?;
-            }
-            process = &process[(eol+1)..];
-            mid_line = false;
-        }
-
-        let n1 = BAD_WARNING_PRE_COLOR.len().min(process.len());
-        let n2 = BAD_WARNING_PRE_ASCII.len().min(process.len());
-        if (&BAD_WARNING_PRE_COLOR[..n1] != &process[..n1]) && (&BAD_WARNING_PRE_ASCII[..n2] != &process[..n2]) {
-            output.write_all(process)?;
-            output.flush()?;
-            mid_line = true;
-            process = &[];
-        }
-
-        let end = pending.len();
-        let start = end - process.len();
-        let n = process.len();
-        pending.copy_within(start..end, 0);
-        pending.resize(n, 0);
+fn filter_stderr(input: std::process::ChildStderr) -> io::Result<()> {
+    for line in BufReader::new(input).lines() {
+        let line = line?;
+        const BAD_WARNING_PRE_COLOR : &'static str = "\x1B[0m\x1B[0m\x1B[1m\x1B[33mwarning\x1B[0m\x1B[1m:\x1B[0m be sure to add `";
+        const BAD_WARNING_PRE_ASCII : &'static str = "warning: be sure to add `";
+        const BAD_WARNING_POST : &'static str = "` to your PATH to be able to run the installed binaries";
+        if line.ends_with(BAD_WARNING_POST) && (line.starts_with(BAD_WARNING_PRE_COLOR) || line.starts_with(BAD_WARNING_PRE_ASCII)) { continue }
+        eprintln!("{}", line);
     }
+    Ok(())
 }
 
 fn help() -> Result<(), Error> {

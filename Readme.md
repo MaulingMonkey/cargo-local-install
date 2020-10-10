@@ -17,13 +17,19 @@ Hate having a million copies of `cargo-web 0.6.26` and waiting for it to build i
 <h2 name="quickstart">Quickstart</h2>
 
 ```sh
-cargo install cargo-local-install # <400 LOC of rust with 0 dependencies, builds in < 3 seconds on my machine
+# no dependencies, builds in < 3 seconds on my machine
+cargo install cargo-local-install --no-default-features
+
 # slow first builds that create new exes
 cargo local-install --locked cargo-web --version "^0.6" --root project-a # symlinks project-a/bin/cargo-web.exe
 cargo local-install --locked cargo-web --version "^0.5" --root project-b # symlinks project-b/bin/cargo-web.exe
+
 # fast cached builds that reuse existing exes
 cargo local-install --locked cargo-web --version "^0.6" --root project-c # symlinks project-c/bin/cargo-web.exe
 cargo local-install --locked cargo-web --version "^0.6"                  # symlinks bin/cargo-web.exe
+
+# Adds Cargo.toml metadata support, < 30 seconds
+cargo install cargo-local-install
 ```
 
 Options are broadly similar to `cargo install`, with a few caveats:
@@ -32,6 +38,22 @@ Options are broadly similar to `cargo install`, with a few caveats:
 * `--frozen` and `--offline` are not supported (don't think they worked for `cargo install` either though!)
 * `-Z <FLAG>` is not supported
 
+Alternatively, you can specify workspace or package metadata in your Cargo.toml, similar to [[dependencies]](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html), which will be installed by `cargo local-install`:
+
+```toml
+[workspace.metadata.local-install]
+cargo-web = "0.6" # == "^0.6" - includes "0.6.26" - locked by default
+cargo-web = { version = "0.6", registry = "crates.io", locked = false } # `locked = false` ignores cargo-web's Cargo.lock
+cargo-web = { path = "../cargo-web" }
+cargo-web = { git = "https://github.com/koute/cargo-web" }
+cargo-web = { git = "https://github.com/koute/cargo-web", branch = "master" }
+cargo-web = { git = "https://github.com/koute/cargo-web", rev = "a9895bf536e8ac6a0806382886b7be90138f01f3" }
+
+# not (yet?) implemented:
+#   features = [...]
+#   default-features = false
+#   optional = true
+```
 
 
 <h2 name="what-why">What? Why?</h2>

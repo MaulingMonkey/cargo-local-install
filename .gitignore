@@ -1,2 +1,2 @@
-/bin
-/target
+/test/**/bin/
+/target/

@@ -1,0 +1,10 @@
+# https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[package]
+name            = "test-package-metadata-cargo-local-install"
+version         = "0.0.0-git"
+publish         = false
+edition         = "2018"
+
+[package.metadata.local-install]
+cargo-web       = "=0.6.26"

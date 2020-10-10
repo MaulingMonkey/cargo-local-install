@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
 #[macro_use] mod macros;
+#[cfg(    feature = "manifest") ] mod manifest;
+#[cfg(not(feature = "manifest"))] mod manifest { pub(super) fn find_cwd_installs() -> Result<Vec<crate::InstallSet>, crate::Error> { Ok(Vec::new()) } }
 
 use std::env::ArgsOs;
 use std::fmt::{self, Display, Debug, Formatter, Write as _};
@@ -21,11 +23,6 @@ impl std::error::Error for Error {}
 enum Inner { Io(io::Error) }
 impl From<io::Error> for Inner { fn from(err: io::Error) -> Self { Inner::Io(err) } }
 
-macro_rules! error {
-    ( None,      $fmt:literal $($tt:tt)* ) => { Error(format!($fmt $($tt)*), None) };
-    ( $err:expr, $fmt:literal $($tt:tt)* ) => { Error(format!($fmt $($tt)*), Some($err.into())) };
-}
-
 
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -33,6 +30,28 @@ enum LogMode {
     Quiet,
     Normal,
     Verbose,
+}
+
+#[derive(Debug)]
+struct InstallSet {
+    bin:        PathBuf,
+    src:        Option<PathBuf>,
+    installs:   Vec<Install>,
+}
+
+#[derive(Debug)]
+struct Install {
+    name:   OsString,
+    flags:  Vec<InstallFlag>,
+}
+
+#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
+struct InstallFlag {
+    flag: OsString,
+    args: Vec<OsString>,
+}
+impl InstallFlag {
+    fn new(flag: impl Into<OsString>, args: Vec<OsString>) -> Self { Self { flag: flag.into(), args } }
 }
 
 /// Run an install after reading the executable name / subcommand.
@@ -106,17 +125,15 @@ pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsS
     let mut path_warning= true;
     let mut log_mode    = LogMode::Normal;
     let mut locked      = None;
-    let mut root        = None;
+    let mut dst_bin     = PathBuf::from("bin");
     let mut target_dir  = None;
     let mut path        = None;
 
-    let mut options     = Vec::<(OsString, Vec<OsString>)>::new(); // will get reordered for improved caching
+    let mut options     = Vec::<InstallFlag>::new(); // will get reordered for improved caching
     let mut crates      = Vec::<OsString>::new();
 
-    let mut any = false;
     while let Some(arg) = args.next() {
         let arg = arg.into();
-        any = true;
         let lossy = arg.to_string_lossy();
         match &*lossy {
             "--help"        => return help(),
@@ -127,7 +144,8 @@ pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsS
             "--unlocked"    => locked = Some(false), // new to cargo-local-install
 
             // Custom-handled flags
-            "--root"        => root         = Some(PathBuf::from(args.next().ok_or_else(|| error!(None, "--root must specify a directory"))?.into())),
+            "--root"        => dst_bin      = PathBuf::from(args.next().ok_or_else(|| error!(None, "--root must specify a directory"))?.into()).join("bin"),
+            "--out-bin"     => dst_bin      = PathBuf::from(args.next().ok_or_else(|| error!(None, "--out-bin must specify a directory"))?.into()), // new to cargo-local-install
             "--target-dir"  => target_dir   = Some(canonicalize(PathBuf::from(args.next().ok_or_else(|| error!(None, "--target-dir must specify a directory"))?.into()))?),
             "--path"        => path         = Some(canonicalize(PathBuf::from(args.next().ok_or_else(|| error!(None, "--path must specify a directory"))?.into()))?),
             "--list"        => return Err(error!(None, "not yet implemented: --list (should this list global cache or local bins?)")),
@@ -141,18 +159,18 @@ pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsS
             // pass-through single-arg commands
             "-q" | "--quiet" => {
                 log_mode = LogMode::Quiet;
-                options.push((arg, Vec::new()));
+                options.push(InstallFlag::new(arg, Vec::new()));
             },
             "-v" | "--verbose" => {
                 log_mode = LogMode::Verbose;
-                options.push((arg, Vec::new()));
+                options.push(InstallFlag::new(arg, Vec::new()));
             },
             "-j" | "--jobs" |
             "-f" | "--force" |
             "--all-features" | "--no-default-features" |
             "--debug" | "--bins" | "--examples"
             => {
-                options.push((arg, Vec::new()));
+                options.push(InstallFlag::new(arg, Vec::new()));
             },
 
             // pass-through single-arg commands
@@ -163,7 +181,7 @@ pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsS
             "--color"
             => {
                 let arg2 = args.next().ok_or_else(|| error!(None, "{} requires an argument", lossy))?.into();
-                options.push((arg, vec![arg2]));
+                options.push(InstallFlag::new(arg, vec![arg2]));
             },
 
             // pass-through multi-arg commands
@@ -180,22 +198,30 @@ pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsS
             _krate => crates.push(arg),
         }
     }
-    if !any {
-        let _ = print_usage(std::io::stderr().lock());
-        return Err(error!(None, "no arguments were specified"));
-    }
     let quiet   = log_mode == LogMode::Quiet;
     let verbose = log_mode == LogMode::Verbose;
 
     let locked = locked.unwrap_or_else(|| {
-        warnln!("either specify --locked to use the same dependencies the crate was built with, or --unlocked to get rid of this warning");
+        if !crates.is_empty() { warnln!("either specify --locked to use the same dependencies the crate was built with, or --unlocked to get rid of this warning"); }
         false
     });
     if locked {
-        options.push(("--locked".into(), Vec::new()));
+        options.push(InstallFlag::new("--locked", Vec::new()));
     }
 
-    if crates.is_empty() { return Err(error!(None, "no crates specified")) }
+    let mut installs = if crates.is_empty() {
+        manifest::find_cwd_installs().map_err(|err| error!(None, "error enumerating Cargo.tomls: {}", err))?
+    } else {
+        vec![InstallSet {
+            bin:        dst_bin.clone(),
+            src:        None,
+            installs:   crates.into_iter().map(|c| Install { name: c, flags: vec![] }).collect(),
+        }]
+    };
+
+    if installs.is_empty() {
+        return Err(error!(None, "no crates specified"))
+    }
 
     let global_dir = {
         let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
@@ -207,18 +233,42 @@ pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsS
     let crates_cache_dir = global_dir.join("crates");
 
     let target_dir = target_dir.map_or_else(|| Ok(global_dir.join("target")), |td| canonicalize(td))?;
-    options.push(("--target-dir".into(), vec![target_dir.into()]));
-    if let Some(path) = path { options.push(("--path".into(), vec![canonicalize(path)?.into()])); }
+    options.push(InstallFlag::new("--target-dir", vec![target_dir.into()]));
+    if let Some(path) = path { options.push(InstallFlag::new("--path", vec![canonicalize(path)?.into()])); }
     options.sort();
-    let options = options;
 
-    let root = root.unwrap_or_else(|| PathBuf::new());
-    let dst_bin = root.join("bin");
-    std::fs::create_dir_all(&dst_bin).map_err(|err| error!(err, "unable to create {}: {}", dst_bin.display(), err))?;
+    for set in installs.iter_mut() {
+        for install in set.installs.iter_mut() {
+            install.flags.extend(options.clone());
+            install.flags.sort();
+        }
+    }
 
-    for krate in crates.into_iter() {
-        let context = Context { dry_run, quiet, verbose, crates_cache_dir: crates_cache_dir.as_path(), dst_bin: dst_bin.as_path() };
-        install_crate(context, krate, options.iter())?;
+    if !dry_run { std::fs::create_dir_all(&dst_bin).map_err(|err| error!(err, "unable to create {}: {}", dst_bin.display(), err))? }
+
+    for set in installs.into_iter() {
+        let built = set.bin.join(".built");
+        if let Some(src) = set.src.as_ref() {
+            let src_mod = src.metadata().ok().and_then(|m| m.modified().ok());
+            let built_mod = built.metadata().ok().and_then(|m| m.modified().ok());
+
+            let up_to_date = match (src_mod, built_mod) {
+                (Some(src), Some(built))    => src < built,
+                _other                      => false,
+            };
+
+            if up_to_date {
+                if verbose { statusln!("Skipping", "`{}`: up to date", src.display()); }
+                continue
+            }
+        }
+        for install in set.installs.into_iter() {
+            let context = Context { dry_run, quiet, verbose, crates_cache_dir: crates_cache_dir.as_path(), dst_bin: set.bin.as_path() };
+            install.install(context)?;
+        }
+        if set.src.is_some() {
+            std::fs::write(&built, "").map_err(|err| error!(err, "unable to create {}: {}", built.display(), err))?;
+        }
     }
 
     if path_warning { warnln!("be sure to add `{}` to your PATH to be able to run the installed binaries", dst_bin.display()); }
@@ -233,92 +283,94 @@ struct Context<'a> {
     pub dst_bin:            &'a Path,
 }
 
-fn install_crate<'o, Opts: Iterator<Item = &'o (OsString, Vec<OsString>)>>(context: Context, krate: OsString, options: Opts) -> Result<(), Error> {
-    let Context { dry_run, quiet, verbose, crates_cache_dir, dst_bin } = context;
+impl Install {
+    fn install(self, context: Context) -> Result<(), Error> {
+        let Context { dry_run, quiet, verbose, crates_cache_dir, dst_bin } = context;
 
-    let mut trace = format!("cargo install");
-    let mut cmd = Command::new("cargo");
-    cmd.arg("install");
-    for (flag, args) in options {
-        write!(&mut trace, " {}", flag.to_str().unwrap()).unwrap();
-        cmd.arg(flag);
-        for arg in args.into_iter() {
-            write!(&mut trace, " {:?}", arg).unwrap();
-            cmd.arg(arg);
-        }
-    }
-
-    let hash = {
-        // real trace will have "--root ...", but that depends on hash!
-        let trace_for_hash = format!("{} -- {}", trace, krate.to_string_lossy());
-        #[allow(deprecated)] let mut hasher = std::hash::SipHasher::new();
-        trace_for_hash.hash(&mut hasher);
-        format!("{:016x}", hasher.finish())
-    };
-
-    let krate_build_dir = crates_cache_dir.join(hash);
-    write!(&mut trace, " --root {:?}", krate_build_dir.display()).unwrap();
-    cmd.arg("--root").arg(&krate_build_dir);
-
-    write!(&mut trace, " --color always").unwrap();
-    cmd.arg("--color").arg("always");
-
-    trace.push_str(" -- ");
-    trace.push_str(&krate.to_string_lossy());
-    cmd.arg("--");
-    cmd.arg(krate);
-
-    if verbose { statusln!("Running", "`{}`", trace) }
-    if !dry_run {
-        cmd.stderr(Stdio::piped());
-        let mut cmd = cmd.spawn().map_err(|err| error!(err, "failed to spawn {}: {}", trace, err))?;
-        let stderr_thread = cmd.stderr.take().map(|stderr| std::thread::spawn(|| filter_stderr(stderr)));
-        let status = cmd.wait();
-        let _stderr_thread = stderr_thread.map(|t| t.join());
-        let status = status.map_err(|err| error!(err, "failed to execute {}: {}", trace, err))?;
-        match status.code() {
-            Some(0) => { if verbose { statusln!("Succeeded", "`{}`", trace) } },
-            Some(n) => return Err(error!(None, "{} failed (exit code {})", trace, n)),
-            None    => return Err(error!(None, "{} failed (signal)", trace)),
-        }
-    } else { // dry_run
-        statusln!("Skipped", "`{}` (--dry-run)", trace);
-        return Ok(()); // XXX: Would be nice to log copied bins, but without building them we don't know what they are
-    }
-
-    let src_bin_path = krate_build_dir.join("bin");
-    let src_bins = src_bin_path.read_dir().map_err(|err| error!(err, "unable to enumerate source bins at {}: {}", src_bin_path.display(), err))?;
-    for src_bin in src_bins {
-        let src_bin = src_bin.map_err(|err| error!(err, "error enumerating source bins at {}: {}", src_bin_path.display(), err))?;
-        let dst_bin = dst_bin.join(src_bin.file_name());
-        let file_type = src_bin.file_type().map_err(|err| error!(err, "error determining file type for {}: {}", src_bin.path().display(), err))?;
-        if !file_type.is_file() { continue }
-        let src_bin = src_bin.path();
-
-        if !quiet { statusln!("Replacing", "`{}`", dst_bin.display()) }
-        #[cfg(windows)] {
-            let _ = std::fs::remove_file(&dst_bin);
-            if let Err(err) = std::os::windows::fs::symlink_file(&src_bin, &dst_bin) {
-                if !quiet { warnln!("Unable link `{}` to `{}`: {}", dst_bin.display(), src_bin.display(), err) }
-            } else {
-                if !quiet { statusln!("Linked", "`{}` to `{}`", dst_bin.display(), src_bin.display()) }
-                continue
+        let mut trace = format!("cargo install");
+        let mut cmd = Command::new("cargo");
+        cmd.arg("install");
+        for InstallFlag { flag, args } in self.flags {
+            write!(&mut trace, " {}", flag.to_str().unwrap()).unwrap();
+            cmd.arg(flag);
+            for arg in args.into_iter() {
+                write!(&mut trace, " {:?}", arg).unwrap();
+                cmd.arg(arg);
             }
         }
-        #[cfg(unix)] {
-            let _ = std::fs::remove_file(&dst_bin);
-            if let Err(err) = std::os::unix::fs::symlink(&src_bin, &dst_bin) {
-                if !quiet { warnln!("Unable link `{}` to `{}`: {}", dst_bin.display(), src_bin.display(), err) }
-            } else {
-                if !quiet { statusln!("Linked", "`{}` to `{}`", dst_bin.display(), src_bin.display()) }
-                continue
-            }
-        }
-        std::fs::copy(&src_bin, &dst_bin).map_err(|err| error!(err, "error replacing `{}` with `{}`: {}", dst_bin.display(), src_bin.display(), err))?;
-        if !quiet { statusln!("Replaced", "`{}` with `{}`", dst_bin.display(), src_bin.display()) }
-    }
 
-    Ok(())
+        let hash = {
+            // real trace will have "--root ...", but that depends on hash!
+            let trace_for_hash = format!("{} -- {}", trace, self.name.to_string_lossy());
+            #[allow(deprecated)] let mut hasher = std::hash::SipHasher::new();
+            trace_for_hash.hash(&mut hasher);
+            format!("{:016x}", hasher.finish())
+        };
+
+        let krate_build_dir = crates_cache_dir.join(hash);
+        write!(&mut trace, " --root {:?}", krate_build_dir.display()).unwrap();
+        cmd.arg("--root").arg(&krate_build_dir);
+
+        write!(&mut trace, " --color always").unwrap();
+        cmd.arg("--color").arg("always");
+
+        trace.push_str(" -- ");
+        trace.push_str(&self.name.to_string_lossy());
+        cmd.arg("--");
+        cmd.arg(self.name);
+
+        if verbose { statusln!("Running", "`{}`", trace) }
+        if !dry_run {
+            cmd.stderr(Stdio::piped());
+            let mut cmd = cmd.spawn().map_err(|err| error!(err, "failed to spawn {}: {}", trace, err))?;
+            let stderr_thread = cmd.stderr.take().map(|stderr| std::thread::spawn(|| filter_stderr(stderr)));
+            let status = cmd.wait();
+            let _stderr_thread = stderr_thread.map(|t| t.join());
+            let status = status.map_err(|err| error!(err, "failed to execute {}: {}", trace, err))?;
+            match status.code() {
+                Some(0) => { if verbose { statusln!("Succeeded", "`{}`", trace) } },
+                Some(n) => return Err(error!(None, "{} failed (exit code {})", trace, n)),
+                None    => return Err(error!(None, "{} failed (signal)", trace)),
+            }
+        } else { // dry_run
+            statusln!("Skipped", "`{}` (--dry-run)", trace);
+            return Ok(()); // XXX: Would be nice to log copied bins, but without building them we don't know what they are
+        }
+
+        let src_bin_path = krate_build_dir.join("bin");
+        let src_bins = src_bin_path.read_dir().map_err(|err| error!(err, "unable to enumerate source bins at {}: {}", src_bin_path.display(), err))?;
+        for src_bin in src_bins {
+            let src_bin = src_bin.map_err(|err| error!(err, "error enumerating source bins at {}: {}", src_bin_path.display(), err))?;
+            let dst_bin = dst_bin.join(src_bin.file_name());
+            let file_type = src_bin.file_type().map_err(|err| error!(err, "error determining file type for {}: {}", src_bin.path().display(), err))?;
+            if !file_type.is_file() { continue }
+            let src_bin = src_bin.path();
+
+            if !quiet { statusln!("Replacing", "`{}`", dst_bin.display()) }
+            #[cfg(windows)] {
+                let _ = std::fs::remove_file(&dst_bin);
+                if let Err(err) = std::os::windows::fs::symlink_file(&src_bin, &dst_bin) {
+                    if !quiet { warnln!("Unable link `{}` to `{}`: {}", dst_bin.display(), src_bin.display(), err) }
+                } else {
+                    if !quiet { statusln!("Linked", "`{}` to `{}`", dst_bin.display(), src_bin.display()) }
+                    continue
+                }
+            }
+            #[cfg(unix)] {
+                let _ = std::fs::remove_file(&dst_bin);
+                if let Err(err) = std::os::unix::fs::symlink(&src_bin, &dst_bin) {
+                    if !quiet { warnln!("Unable link `{}` to `{}`: {}", dst_bin.display(), src_bin.display(), err) }
+                } else {
+                    if !quiet { statusln!("Linked", "`{}` to `{}`", dst_bin.display(), src_bin.display()) }
+                    continue
+                }
+            }
+            std::fs::copy(&src_bin, &dst_bin).map_err(|err| error!(err, "error replacing `{}` with `{}`: {}", dst_bin.display(), src_bin.display(), err))?;
+            if !quiet { statusln!("Replaced", "`{}` with `{}`", dst_bin.display(), src_bin.display()) }
+        }
+
+        Ok(())
+    }
 }
 
 /// Filters out bad warnings like:
@@ -371,7 +423,8 @@ fn print_usage(mut o: impl io::Write) -> io::Result<()> {
     writeln!(o, "        --examples                                   Install all examples")?;
     writeln!(o, "        --target <TRIPLE>                            Build for the target triple")?;
     writeln!(o, "        --target-dir <DIRECTORY>                     Directory for all generated artifacts")?;
-    writeln!(o, "        --root <DIR>                                 Directory to install packages into")?;
+    writeln!(o, "        --root <DIR>                                 Install package bins into <DIR>/bin")?;
+    writeln!(o, "        --out-bin <DIR>                              Install package bins into <DIR>")?;
     writeln!(o, "        --index <INDEX>                              Registry index to install from")?;
     writeln!(o, "        --registry <REGISTRY>                        Registry to use")?;
     writeln!(o, "    -v, --verbose                                    Use verbose output (-vv very verbose/build.rs output)")?;

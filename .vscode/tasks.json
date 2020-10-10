@@ -17,7 +17,7 @@
         {
             "label":        "build",
             "dependsOrder": "sequence",
-            "dependsOn":    ["0", "1", "2"],
+            "dependsOn":    ["0", "1", "2", "3"],
             "group":        { "kind": "build", "isDefault": true }
         },
 
@@ -28,24 +28,31 @@
             "label":            "cargo fetch",
             "command":          "cargo fetch",
             "presentation":     { "group": "0" },
-            "problemMatcher":   { "base": "$rustc", "owner": "cargo build", "source": "cargo fetch" },
+            "problemMatcher":   { "base": "$rustc", "owner": "cargo fetch", "source": "cargo fetch" },
         },
 
 
 
         { "label": "1", "dependsOn": [
-            "cargo build --frozen --all-targets",
-            "cargo +nightly doc --frozen --no-deps --release",
+            "cargo build --frozen --all-targets --all-features",
+            "cargo build --frozen --all-targets --release --no-default-features",
+            "cargo +nightly doc --frozen --no-deps --release --all-features",
         ]},
         {
-            "label":            "cargo build --frozen --all-targets",
-            "command":          "cargo build --frozen --all-targets",
+            "label":            "cargo build --frozen --all-targets --all-features",
+            "command":          "cargo build --frozen --all-targets --all-features",
             "presentation":     { "group": "1" },
-            "problemMatcher":   { "base": "$rustc", "owner": "cargo build", "source": "cargo build" },
+            "problemMatcher":   { "base": "$rustc", "owner": "cargo build --all-features", "source": "cargo build --all-features" },
         },
         {
-            "label":            "cargo +nightly doc --frozen --no-deps --release",
-            "command":          "cargo +nightly doc --frozen --no-deps --release",
+            "label":            "cargo build --frozen --all-targets --release --no-default-features",
+            "command":          "cargo build --frozen --all-targets --release --no-default-features",
+            "presentation":     { "group": "1" },
+            "problemMatcher":   { "base": "$rustc", "owner": "cargo build --no-default-features", "source": "cargo build --no-default-features" },
+        },
+        {
+            "label":            "cargo +nightly doc --frozen --no-deps --release --all-features",
+            "command":          "cargo +nightly doc --frozen --no-deps --release --all-features",
             "presentation":     { "group": "1" },
             "problemMatcher":   { "base": "$rustc", "owner": "cargo doc", "source": "cargo doc" },
         },
@@ -74,6 +81,19 @@
             "command":          "cargo local-install cargo-web --version \"^0.6\" --dry-run",
             "presentation":     { "group": "2" },
             "problemMatcher":   { "base": "$rustc", "owner": "cargo local-install cargo-web --version \"^0.6\" --dry-run", "source": "cargo local-install cargo-web --version \"^0.6\" --dry-run" },
+        },
+
+
+
+        { "label": "3", "dependsOn": [
+            "scripts/test",
+        ]},
+        {
+            "label":            "scripts/test",
+            //"command":          "scripts/test",
+            "windows":          { "command": "scripts\\test" },
+            "presentation":     { "group": "3" },
+            "problemMatcher":   { "base": "$rustc", "owner": "cargo test", "source": "cargo test" },
         },
 
 

@@ -1,3 +1,8 @@
+macro_rules! error {
+    ( None,      $fmt:literal $($tt:tt)* ) => { crate::Error(format!($fmt $($tt)*), None) };
+    ( $err:expr, $fmt:literal $($tt:tt)* ) => { crate::Error(format!($fmt $($tt)*), Some($err.into())) };
+}
+
 macro_rules! errorln {
     ( $fmt:literal $($tt:tt)* ) => {{
         use std::io::Write;

@@ -1,0 +1,22 @@
+# https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[workspace]
+members = [
+    ".",
+    "no-metadata",
+    "package-metadata",
+]
+
+[workspace.metadata.local-install]
+cargo-web       = "=0.6.26"
+
+
+
+[package]
+name            = "test-workspace-metadata-cargo-local-install"
+version         = "0.0.0-git"
+publish         = false
+edition         = "2018"
+
+[package.metadata.local-install]
+wasm-pack       = "=0.9.1"

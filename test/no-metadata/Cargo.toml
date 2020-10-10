@@ -2,6 +2,6 @@
 
 [package]
 name            = "test-no-metadata-cargo-local-install"
-version         = "0.0.0-git"
+version         = "0.0.0"
 publish         = false
 edition         = "2018"

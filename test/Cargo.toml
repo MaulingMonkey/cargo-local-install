@@ -14,7 +14,7 @@ cargo-web       = "=0.6.26"
 
 [package]
 name            = "test-workspace-metadata-cargo-local-install"
-version         = "0.0.0-git"
+version         = "0.0.0"
 publish         = false
 edition         = "2018"
 

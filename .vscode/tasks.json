@@ -5,6 +5,7 @@
     "presentation": {
         "clear": true,
         "panel": "shared",
+        "reveal": "always"
         //"revealProblems": "onProblem",
     },
     "options": {

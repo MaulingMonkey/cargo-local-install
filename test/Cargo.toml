@@ -5,6 +5,7 @@ members = [
     ".",
     "no-metadata",
     "package-metadata",
+    "local-package",
 ]
 
 [workspace.metadata.local-install]
@@ -20,3 +21,4 @@ edition         = "2018"
 
 [package.metadata.local-install]
 wasm-pack       = "=0.9.1"
+test-local-package = { path = "local-package" }

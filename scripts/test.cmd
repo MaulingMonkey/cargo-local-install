@@ -26,6 +26,8 @@ cargo build --bin cargo-local-install
 @call :expect-version "bin\wasm-pack"                  "0.9.1"  || goto :die
 @call :expect-version "package-metadata\bin\cargo-web" "0.6.26" || goto :die
 @call :expect-failure "no-metadata\bin\cargo-web" "--version"   || goto :die
+@call :expect-success "bin\test-local-package"                  || goto :die
+@call :expect-failure "empty\bin\test-local-package"            || goto :die
 
 :die
 @echo.

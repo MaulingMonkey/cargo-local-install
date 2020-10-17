@@ -39,10 +39,20 @@ struct InstallSet {
     installs:   Vec<Install>,
 }
 
+impl InstallSet {
+    fn any_local(&self) -> bool { self.installs.iter().any(|i| i.is_local()) }
+    fn any_remote(&self) -> bool { self.installs.iter().any(|i| i.is_remote()) }
+}
+
 #[derive(Debug)]
 struct Install {
     name:   OsString,
     flags:  Vec<InstallFlag>,
+}
+
+impl Install {
+    fn is_local(&self) -> bool { self.flags.iter().any(|flag| flag.flag == "--path") }
+    fn is_remote(&self) -> bool { !self.is_local() }
 }
 
 #[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
@@ -247,8 +257,16 @@ pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsS
     if !dry_run { std::fs::create_dir_all(&dst_bin).map_err(|err| error!(err, "unable to create {}: {}", dst_bin.display(), err))? }
 
     for set in installs.into_iter() {
+        let any_local  = set.any_local();
+        let any_remote = set.any_remote();
+        if set.installs.is_empty() { continue }
+        assert!(any_local || any_remote);
+
         let built = set.bin.join(".built");
-        if let Some(src) = set.src.as_ref() {
+
+        let up_to_date = if !any_remote {
+            false
+        } else if let Some(src) = set.src.as_ref() {
             let src_mod = src.metadata().ok().and_then(|m| m.modified().ok());
             let built_mod = built.metadata().ok().and_then(|m| m.modified().ok());
 
@@ -257,16 +275,24 @@ pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsS
                 _other                      => false,
             };
 
-            if up_to_date {
+            if up_to_date && !any_local {
                 if verbose { statusln!("Skipping", "`{}`: up to date", src.display()); }
                 continue
             }
-        }
+
+            up_to_date
+        } else {
+            false
+        };
+
         for install in set.installs.into_iter() {
+            if install.is_remote() {
+                if up_to_date { continue }
+            }
             let context = Context { dry_run, quiet, verbose, crates_cache_dir: crates_cache_dir.as_path(), dst_bin: set.bin.as_path() };
             install.install(context)?;
         }
-        if set.src.is_some() {
+        if any_remote && set.src.is_some() {
             std::fs::write(&built, "").map_err(|err| error!(err, "unable to create {}: {}", built.display(), err))?;
         }
     }

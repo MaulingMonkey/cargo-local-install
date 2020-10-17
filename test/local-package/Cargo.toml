@@ -1,0 +1,7 @@
+# https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[package]
+name            = "test-local-package"
+version         = "0.0.0"
+publish         = false
+edition         = "2018"

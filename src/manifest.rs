@@ -18,6 +18,7 @@ pub(super) fn find_cwd_installs() -> Result<Vec<InstallSet>, Error> {
         path.push("Cargo.toml");
         if path.exists() {
             let file = File::from_path(&path)?;
+            let dir = path.parent().unwrap();
 
             let mut installs = Vec::new();
             for has_meta in vec![file.toml.workspace, file.toml.package].into_iter().flatten() {
@@ -25,7 +26,7 @@ pub(super) fn find_cwd_installs() -> Result<Vec<InstallSet>, Error> {
                     installs.push({
                         let name = OsStr::new(package.as_ref().map(|p| p.as_str()).unwrap_or(&name));
                         let mut flags = match source {
-                            InstallSource::Local { path }                                   => vec![ InstallFlag::new("--path", vec![path.into()]) ],
+                            InstallSource::Local { path }                                   => vec![ InstallFlag::new("--path", vec![dir.join(path).into()]) ],
                             InstallSource::Git { git }                                      => vec![ InstallFlag::new("--git", vec![git.into()]) ],
                             InstallSource::GitRev { git, rev }                              => vec![ InstallFlag::new("--git", vec![git.into()]), InstallFlag::new("--rev", vec![rev.into()] ) ],
                             InstallSource::GitBranch { git, branch }                        => vec![ InstallFlag::new("--git", vec![git.into()]), InstallFlag::new("--branch", vec![branch.into()] ) ],

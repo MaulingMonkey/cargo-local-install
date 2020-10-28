@@ -130,6 +130,32 @@ pub fn run_from_args_os_after_exe(args: ArgsOs) -> Result<(), Error> {
 pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsStr>>(args: Args) -> Result<(), Error> {
     let start = std::time::Instant::now();
 
+    let (maj, min, pat, stable) = Command::new("cargo").arg("--version").stderr(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).output().map_or((0, 0, 0, false), |o|{
+        fn split_once<'a>(a: &'a str, sep: &str) -> Option<(&'a str, &'a str)> {
+            let i = a.find(sep);
+            i.map(|i| {
+                let (a,b) = a.split_at(i);
+                (a, &b[sep.len()..])
+            })
+        }
+
+        let o = &*String::from_utf8_lossy(&o.stdout);
+        let ver = o.split(' ').nth(1).unwrap_or("");
+        let (maj, ver) = split_once(ver, ".").unwrap_or((ver, ""));
+        let (min, ver) = split_once(ver, ".").unwrap_or((ver, ""));
+        let (pat, pre) = split_once(ver, "-").unwrap_or((ver, ""));
+        let maj = maj.parse().unwrap_or(0u32);
+        let min = min.parse().unwrap_or(0u32);
+        let pat = pat.parse().unwrap_or(0u32);
+        let stable = pre.is_empty();
+        (maj, min, pat, stable)
+    });
+
+    // 1.26.0 flag: https://github.com/rust-lang/cargo/commit/b83ef97efb5d8d2a0d15f3dcd84f3f5d65a98193
+    // 1.26.0 var:  https://github.com/rust-lang/cargo/blob/41480f5cc50863600e05aa17d13264c88070436a/src/cargo/core/features.rs#L315
+    // 1.47.0 var:  https://github.com/rust-lang/cargo/blob/becb4c282b8f37469efb8f5beda45a5501f9d367/src/cargo/core/features.rs#L509
+    let z_no_index_update_hack = ((1, 26, 0, true) ..= (1, 47, 0, true)).contains(&(maj,min,pat,stable));
+
     // XXX: I'll likely relax either "Into<OsString>" or "AsRef<OsStr>", but I haven't decided which just yet.
     let mut args = args.peekable();
 
@@ -287,12 +313,19 @@ pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsS
             false
         };
 
+        let mut first_install = true;
         for install in set.installs.into_iter() {
             if install.is_remote() {
                 if up_to_date { continue }
             }
-            let context = Context { dry_run, quiet, verbose, crates_cache_dir: crates_cache_dir.as_path(), dst_bin: set.bin.as_path() };
+            let context = Context {
+                dry_run, quiet, verbose,
+                z_no_index_update_hack: z_no_index_update_hack && !first_install,
+                crates_cache_dir: crates_cache_dir.as_path(),
+                dst_bin: set.bin.as_path()
+            };
             install.install(context)?;
+            first_install = false;
         }
         if any_remote && set.src.is_some() {
             std::fs::write(&built, "").map_err(|err| error!(err, "unable to create {}: {}", built.display(), err))?;
@@ -309,13 +342,14 @@ struct Context<'a> {
     pub dry_run:            bool,
     pub quiet:              bool,
     pub verbose:            bool,
+    pub z_no_index_update_hack: bool,
     pub crates_cache_dir:   &'a Path,
     pub dst_bin:            &'a Path,
 }
 
 impl Install {
     fn install(self, context: Context) -> Result<(), Error> {
-        let Context { dry_run, quiet, verbose, crates_cache_dir, dst_bin } = context;
+        let Context { dry_run, quiet, verbose, z_no_index_update_hack, crates_cache_dir, dst_bin } = context;
 
         let mut trace = format!("cargo install");
         let mut cmd = Command::new("cargo");
@@ -343,6 +377,11 @@ impl Install {
 
         write!(&mut trace, " --color always").unwrap();
         cmd.arg("--color").arg("always");
+
+        if z_no_index_update_hack {
+            cmd.arg("-Z").arg("no-index-update");
+            cmd.env("__CARGO_TEST_CHANNEL_OVERRIDE_DO_NOT_USE_THIS", "nightly"); // *cackles manically*
+        }
 
         trace.push_str(" -- ");
         trace.push_str(&self.name.to_string_lossy());

@@ -128,6 +128,8 @@ pub fn run_from_args_os_after_exe(args: ArgsOs) -> Result<(), Error> {
 /// # }
 /// ```
 pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsStr>>(args: Args) -> Result<(), Error> {
+    let start = std::time::Instant::now();
+
     // XXX: I'll likely relax either "Into<OsString>" or "AsRef<OsStr>", but I haven't decided which just yet.
     let mut args = args.peekable();
 
@@ -297,6 +299,8 @@ pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsS
         }
     }
 
+    let stop = std::time::Instant::now();
+    if !quiet { statusln!("Finished", "installing crate(s) in {:.2}s", (stop-start).as_secs_f32()); }
     if path_warning { warnln!("be sure to add `{}` to your PATH to be able to run the installed binaries", dst_bin.display()); }
     Ok(())
 }
@@ -372,7 +376,7 @@ impl Install {
             if !file_type.is_file() { continue }
             let src_bin = src_bin.path();
 
-            if !quiet { statusln!("Replacing", "`{}`", dst_bin.display()) }
+            if verbose { statusln!("Replacing", "`{}`", dst_bin.display()) }
             #[cfg(windows)] {
                 let _ = std::fs::remove_file(&dst_bin);
                 if let Err(err) = std::os::windows::fs::symlink_file(&src_bin, &dst_bin) {
@@ -399,15 +403,41 @@ impl Install {
     }
 }
 
+struct Ignore {
+    /// ASCII prefix
+    pre:    &'static str,
+
+    /// ANSI colored prefix
+    prec:   &'static str,
+
+    /// postfix
+    post:   &'static str,
+}
+
+static IGNORE : &'static [Ignore] = &[
+    // We spam reinstalls for already installed stuff
+    Ignore { pre: "     Ignored package `", post: "` is already installed, use --force to override", prec: "\u{1b}[0m\u{1b}[0m\u{1b}[1m\u{1b}[32m     Ignored\u{1b}[0m package `" },
+
+    // We spam "internal" .cargo\local-install paths
+    Ignore { pre: "warning: be sure to add `", post: "` to your PATH to be able to run the installed binaries", prec: "\x1B[0m\x1B[0m\x1B[1m\x1B[33mwarning\x1B[0m\x1B[1m:\x1B[0m be sure to add `" },
+    Ignore { pre: "   Replacing ", post: "", prec: "\u{1b}[0m\u{1b}[0m\u{1b}[1m\u{1b}[32m   Replacing\u{1b}[0m " },
+    Ignore { pre: "    Replaced ", post: "", prec: "\u{1b}[0m\u{1b}[0m\u{1b}[1m\u{1b}[32m    Replaced\u{1b}[0m " },
+
+    // Don't spam this per-crate that's silly, roll our own for the final output
+    Ignore { pre: "    Finished ", post: "", prec: "\u{1b}[0m\u{1b}[0m\u{1b}[1m\u{1b}[32m    Finished\u{1b}[0m " },
+
+    // Okay, we'll let *this* spam through...
+    //Ignore { pre: "  Installing ", post: "", prec: "\u{1b}[0m\u{1b}[0m\u{1b}[1m\u{1b}[32m  Installing\u{1b}[0m " },
+];
+
+
+
 /// Filters out bad warnings like:
 /// "\u{1b}[0m\u{1b}[0m\u{1b}[1m\u{1b}[33mwarning\u{1b}[0m\u{1b}[1m:\u{1b}[0m be sure to add `C:\\Users\\Name\\.cargo\\local-install\\crates\\e5ce6d367e4d6f3f\\bin` to your PATH to be able to run the installed binaries"
 fn filter_stderr(input: std::process::ChildStderr) -> io::Result<()> {
     for line in BufReader::new(input).lines() {
         let line = line?;
-        const BAD_WARNING_PRE_COLOR : &'static str = "\x1B[0m\x1B[0m\x1B[1m\x1B[33mwarning\x1B[0m\x1B[1m:\x1B[0m be sure to add `";
-        const BAD_WARNING_PRE_ASCII : &'static str = "warning: be sure to add `";
-        const BAD_WARNING_POST : &'static str = "` to your PATH to be able to run the installed binaries";
-        if line.ends_with(BAD_WARNING_POST) && (line.starts_with(BAD_WARNING_PRE_COLOR) || line.starts_with(BAD_WARNING_PRE_ASCII)) { continue }
+        if IGNORE.iter().any(|ignore| line.ends_with(ignore.post) && (line.starts_with(ignore.pre) || line.starts_with(ignore.prec))) { continue }
         eprintln!("{}", line);
     }
     Ok(())

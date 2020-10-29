@@ -421,7 +421,7 @@ impl Install {
                 if let Err(err) = std::os::windows::fs::symlink_file(&src_bin, &dst_bin) {
                     if !quiet { warnln!("Unable link `{}` to `{}`: {}", dst_bin.display(), src_bin.display(), err) }
                 } else {
-                    if !quiet { statusln!("Linked", "`{}` to `{}`", dst_bin.display(), src_bin.display()) }
+                    if verbose { statusln!("Linked", "`{}` to `{}`", dst_bin.display(), src_bin.display()) }
                     continue
                 }
             }
@@ -430,7 +430,7 @@ impl Install {
                 if let Err(err) = std::os::unix::fs::symlink(&src_bin, &dst_bin) {
                     if !quiet { warnln!("Unable link `{}` to `{}`: {}", dst_bin.display(), src_bin.display(), err) }
                 } else {
-                    if !quiet { statusln!("Linked", "`{}` to `{}`", dst_bin.display(), src_bin.display()) }
+                    if verbose { statusln!("Linked", "`{}` to `{}`", dst_bin.display(), src_bin.display()) }
                     continue
                 }
             }

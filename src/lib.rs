@@ -163,7 +163,7 @@ pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsS
     let mut path_warning= true;
     let mut log_mode    = LogMode::Normal;
     let mut locked      = None;
-    let mut dst_bin     = PathBuf::from("bin");
+    let mut maybe_dst_bin     = None;
     let mut target_dir  = None;
     let mut path        = None;
 
@@ -182,8 +182,8 @@ pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsS
             "--unlocked"    => locked = Some(false), // new to cargo-local-install
 
             // Custom-handled flags
-            "--root"        => dst_bin      = PathBuf::from(args.next().ok_or_else(|| error!(None, "--root must specify a directory"))?.into()).join("bin"),
-            "--out-bin"     => dst_bin      = PathBuf::from(args.next().ok_or_else(|| error!(None, "--out-bin must specify a directory"))?.into()), // new to cargo-local-install
+            "--root"        => maybe_dst_bin      = Some(PathBuf::from(args.next().ok_or_else(|| error!(None, "--root must specify a directory"))?.into()).join("bin")),
+            "--out-bin"     => maybe_dst_bin      = Some(PathBuf::from(args.next().ok_or_else(|| error!(None, "--out-bin must specify a directory"))?.into())), // new to cargo-local-install
             "--target-dir"  => target_dir   = Some(canonicalize(PathBuf::from(args.next().ok_or_else(|| error!(None, "--target-dir must specify a directory"))?.into()))?),
             "--path"        => path         = Some(canonicalize(PathBuf::from(args.next().ok_or_else(|| error!(None, "--path must specify a directory"))?.into()))?),
             "--list"        => return Err(error!(None, "not yet implemented: --list (should this list global cache or local bins?)")),
@@ -248,14 +248,16 @@ pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsS
     }
 
     let mut installs = if crates.is_empty() {
-        manifest::find_cwd_installs().map_err(|err| error!(None, "error enumerating Cargo.tomls: {}", err))?
+        manifest::find_cwd_installs(maybe_dst_bin.clone()).map_err(|err| error!(None, "error enumerating Cargo.tomls: {}", err))?
     } else {
         vec![InstallSet {
-            bin:        dst_bin.clone(),
+            bin:        maybe_dst_bin.clone().unwrap_or_else(|| PathBuf::from("bin")),
             src:        None,
             installs:   crates.into_iter().map(|c| Install { name: c, flags: vec![] }).collect(),
         }]
     };
+
+    let dst_bin = maybe_dst_bin.unwrap_or_else(|| PathBuf::from("bin"));
 
     if installs.is_empty() {
         return Err(error!(None, "no crates specified"))

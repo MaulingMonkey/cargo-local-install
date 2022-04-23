@@ -11,7 +11,7 @@ use std::path::*;
 
 
 
-pub(super) fn find_cwd_installs() -> Result<Vec<InstallSet>, Error> {
+pub(super) fn find_cwd_installs(maybe_dst_bin: Option<PathBuf>) -> Result<Vec<InstallSet>, Error> {
     let mut path = std::env::current_dir().map_err(|err| error!(err, "unable to determine cwd: {}", err))?;
     let mut files = Vec::new();
     loop {
@@ -41,8 +41,16 @@ pub(super) fn find_cwd_installs() -> Result<Vec<InstallSet>, Error> {
 
             // TODO: add flag to search the entire workspace instead of merely the CWD tree?
             if !installs.is_empty() {
+
+                let file_dst_bin;
+                if let Some(dst_bin) = maybe_dst_bin {
+                    file_dst_bin = dst_bin;
+                } else {
+                    file_dst_bin = file.directory.join("bin");
+                }
+
                 files.push(InstallSet {
-                    bin: file.directory.join("bin"),
+                    bin: file_dst_bin,
                     src: Some(path.clone()),
                     installs,
                 });

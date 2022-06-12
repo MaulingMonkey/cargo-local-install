@@ -227,8 +227,8 @@ impl<'de> Deserialize<'de> for InstallData {
                             if locked.is_some() { return Err(de::Error::duplicate_field("locked")) }
                             locked = Some(map.next_value()?);
                         },
-                        "default_features" => {
-                            if default_features.is_some() { return Err(de::Error::duplicate_field("default_features")) }
+                        "default-features" => {
+                            if default_features.is_some() { return Err(de::Error::duplicate_field("default-features")) }
                             default_features = Some(map.next_value()?);
                         },
                         "features" => {

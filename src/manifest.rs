@@ -22,7 +22,7 @@ pub(super) fn find_cwd_installs(maybe_dst_bin: Option<PathBuf>) -> Result<Vec<In
 
             let mut installs = Vec::new();
             for has_meta in vec![file.toml.workspace, file.toml.package].into_iter().flatten() {
-                for (name, InstallData { package, locked, source }) in has_meta.metadata.local_install.into_iter() {
+                for (name, InstallData { package, locked, source, default_features, features }) in has_meta.metadata.local_install.into_iter() {
                     installs.push({
                         let name = OsStr::new(package.as_ref().map(|p| p.as_str()).unwrap_or(&name));
                         let mut flags = match source {
@@ -34,6 +34,8 @@ pub(super) fn find_cwd_installs(maybe_dst_bin: Option<PathBuf>) -> Result<Vec<In
                             InstallSource::Registry { version, registry: None }             => vec![ InstallFlag::new("--version", vec![fix_version(&version).into()]) ],
                         };
                         if locked { flags.push(InstallFlag::new("--locked", vec![])); }
+                        if !default_features { flags.push(InstallFlag::new("--no-default-features", vec![])); }
+                        if !features.is_empty() { flags.push(InstallFlag::new("--features", features.iter().map(|f| f.into()).collect::<Vec<_>>())); }
                         Install { name: name.into(), flags }
                     });
                 }
@@ -89,7 +91,9 @@ struct Metadata {
 struct InstallData {
     package:    Option<String>,
     locked:     bool,
-    // TODO: features, default-features, optional?
+    // TODO: optional?
+    default_features: bool,
+    features:   Vec<String>,
     source:     InstallSource,
 }
 
@@ -198,11 +202,13 @@ impl<'de> Deserialize<'de> for InstallData {
         impl<'de> de::Visitor<'de> for InstallDataVisitor {
             type Value = InstallData;
             fn expecting(&self, formatter: &mut Formatter) -> fmt::Result { formatter.write_str("a version string or installation dependency table") }
-            fn visit_str   <E>(self, value: &str  ) -> Result<Self::Value, E> { Ok(InstallData { package: None, locked: true, source: InstallSource::Registry { version: value.into(), registry: None } }) }
-            fn visit_string<E>(self, value: String) -> Result<Self::Value, E> { Ok(InstallData { package: None, locked: true, source: InstallSource::Registry { version: value,        registry: None } }) }
+            fn visit_str   <E>(self, value: &str  ) -> Result<Self::Value, E> { Ok(InstallData { package: None, locked: true, default_features: true, features: Vec::new(), source: InstallSource::Registry { version: value.into(), registry: None } }) }
+            fn visit_string<E>(self, value: String) -> Result<Self::Value, E> { Ok(InstallData { package: None, locked: true, default_features: true, features: Vec::new(), source: InstallSource::Registry { version: value,        registry: None } }) }
             fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
                 let mut package     : Option<String> = None;
                 let mut locked      : Option<bool  > = None;
+                let mut default_features    : Option<bool > = None;
+                let mut features    : Option<Vec<String>> = None;
 
                 let mut version     : Option<String> = None;
                 let mut registry    : Option<String> = None;
@@ -220,6 +226,14 @@ impl<'de> Deserialize<'de> for InstallData {
                         "locked" => {
                             if locked.is_some() { return Err(de::Error::duplicate_field("locked")) }
                             locked = Some(map.next_value()?);
+                        },
+                        "default-features" => {
+                            if default_features.is_some() { return Err(de::Error::duplicate_field("default-features")) }
+                            default_features = Some(map.next_value()?);
+                        },
+                        "features" => {
+                            if features.is_some() { return Err(de::Error::duplicate_field("features")) }
+                            features = Some(map.next_value()?);
                         },
                         "version" => {
                             if version  .is_some() { return Err(de::Error::duplicate_field("version")); }
@@ -293,6 +307,8 @@ impl<'de> Deserialize<'de> for InstallData {
                     package,
                     locked: locked.unwrap_or(true),
                     source,
+                    default_features: default_features.unwrap_or(true),
+                    features: features.unwrap_or_default(),
                 })
             }
         }

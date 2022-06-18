@@ -14,9 +14,6 @@ keywords        = ["cargo", "install"]
 categories      = ["development-tools::cargo-plugins"]
 exclude         = [".cargo", ".vscode", "scripts", "target", "test"]
 
-[badges]
-travis-ci       = { repository = "MaulingMonkey/cargo-local-install", branch = "master" }
-
 [features]
 default         = ["manifest"]
 manifest        = ["serde", "toml"]

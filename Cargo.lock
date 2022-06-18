@@ -4,7 +4,7 @@ version = 3
 
 [[package]]
 name = "cargo-local-install"
-version = "0.0.0-git"
+version = "0.1.11"
 dependencies = [
  "serde",
  "toml",

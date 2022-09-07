@@ -2,7 +2,7 @@
 
 #[macro_use] mod macros;
 #[cfg(    feature = "manifest") ] mod manifest;
-#[cfg(not(feature = "manifest"))] mod manifest { pub(super) fn find_cwd_installs() -> Result<Vec<crate::InstallSet>, crate::Error> { Ok(Vec::new()) } }
+#[cfg(not(feature = "manifest"))] mod manifest { pub(super) fn find_cwd_installs(_maybe_dst_bin: Option<std::path::PathBuf>) -> Result<Vec<crate::InstallSet>, crate::Error> { Ok(Vec::new()) } }
 
 use std::env::ArgsOs;
 use std::fmt::{self, Display, Debug, Formatter, Write as _};
@@ -112,13 +112,13 @@ pub fn run_from_args_os_after_exe(args: ArgsOs) -> Result<(), Error> {
 /// let s = s.iter().copied().map(String::from).collect::<Vec<String>>();
 /// run_from_strs(s.iter())?;
 /// run_from_strs(s.into_iter())?;
-/// 
+///
 /// // &OsStr s
 /// let os = ["cargo-web", "--version", "^0.6"];
 /// let os = os.iter().map(OsStr::new).collect::<Vec<&OsStr>>();
 /// run_from_strs(os.iter())?;
 /// run_from_strs(os.into_iter())?;
-/// 
+///
 /// // OsString s
 /// let os = ["cargo-web", "--version", "^0.6"];
 /// let os = os.iter().map(OsString::from).collect::<Vec<OsString>>();

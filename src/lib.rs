@@ -257,8 +257,6 @@ pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsS
         }]
     };
 
-    let dst_bin = maybe_dst_bin.unwrap_or_else(|| PathBuf::from("bin"));
-
     if installs.is_empty() {
         return Err(error!(None, "no crates specified"))
     }
@@ -283,8 +281,6 @@ pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsS
             install.flags.sort();
         }
     }
-
-    if !dry_run { std::fs::create_dir_all(&dst_bin).map_err(|err| error!(err, "unable to create {}: {}", dst_bin.display(), err))? }
 
     for set in installs.into_iter() {
         let any_local  = set.any_local();
@@ -336,7 +332,13 @@ pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsS
 
     let stop = std::time::Instant::now();
     if !quiet { statusln!("Finished", "installing crate(s) in {:.2}s", (stop-start).as_secs_f32()); }
-    if path_warning { warnln!("be sure to add `{}` to your PATH to be able to run the installed binaries", dst_bin.display()); }
+    if path_warning {
+        if let Some(dst_bin) = maybe_dst_bin {
+            warnln!("be sure to add `{}` to your PATH to be able to run the installed binaries", dst_bin.display());
+        } else {
+            warnln!("be sure to add `$crate\\bin` path(s) to your PATH to be able to run the installed binaries");
+        }
+    }
     Ok(())
 }
 
@@ -390,22 +392,31 @@ impl Install {
         cmd.arg("--");
         cmd.arg(self.name);
 
-        if verbose { statusln!("Running", "`{}`", trace) }
-        if !dry_run {
-            cmd.stderr(Stdio::piped());
-            let mut cmd = cmd.spawn().map_err(|err| error!(err, "failed to spawn {}: {}", trace, err))?;
-            let stderr_thread = cmd.stderr.take().map(|stderr| std::thread::spawn(|| filter_stderr(stderr)));
-            let status = cmd.wait();
-            let _stderr_thread = stderr_thread.map(|t| t.join());
-            let status = status.map_err(|err| error!(err, "failed to execute {}: {}", trace, err))?;
-            match status.code() {
-                Some(0) => { if verbose { statusln!("Succeeded", "`{}`", trace) } },
-                Some(n) => return Err(error!(None, "{} failed (exit code {})", trace, n)),
-                None    => return Err(error!(None, "{} failed (signal)", trace)),
-            }
-        } else { // dry_run
-            statusln!("Skipped", "`{}` (--dry-run)", trace);
+        if dry_run {
+            statusln!("Skipping", "`{}` (--dry-run)", trace);
             return Ok(()); // XXX: Would be nice to log copied bins, but without building them we don't know what they are
+        } else if verbose {
+            statusln!("Running", "`{}`", trace);
+        }
+
+        cmd.stderr(Stdio::piped());
+        let mut cmd = cmd.spawn().map_err(|err| error!(err, "failed to spawn {}: {}", trace, err))?;
+        let stderr_thread = cmd.stderr.take().map(|stderr| std::thread::spawn(|| filter_stderr(stderr)));
+        let status = cmd.wait();
+        let _stderr_thread = stderr_thread.map(|t| t.join());
+        let status = status.map_err(|err| error!(err, "failed to execute {}: {}", trace, err))?;
+        match status.code() {
+            Some(0) => { if verbose { statusln!("Succeeded", "`{}`", trace) } },
+            Some(n) => return Err(error!(None, "{} failed (exit code {})", trace, n)),
+            None    => return Err(error!(None, "{} failed (signal)", trace)),
+        }
+
+        if let Err(err) = std::fs::create_dir_all(&dst_bin) {
+            if !quiet {
+                warnln!("Unable to create directory `{}`: {}", dst_bin.display(), err);
+            }
+        } else if verbose {
+            statusln!("Created", "`{}\\`", dst_bin.display());
         }
 
         let src_bin_path = krate_build_dir.join("bin");

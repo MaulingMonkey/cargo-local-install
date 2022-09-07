@@ -1,6 +1,7 @@
 @setlocal && pushd "%~dp0.."
 
-cargo build --bin cargo-local-install
+@call :expect-success cargo build --bin cargo-local-install --release --no-default-features || goto :die
+@call :expect-success cargo build --bin cargo-local-install || goto :die
 @set PATH=%~dp0..\target\debug;%PATH%
 
 @cd "%~dp0..\test"

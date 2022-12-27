@@ -4,6 +4,7 @@
 #[cfg(    feature = "manifest") ] mod manifest;
 #[cfg(not(feature = "manifest"))] mod manifest { pub(super) fn find_cwd_installs(_maybe_dst_bin: Option<std::path::PathBuf>) -> Result<Vec<crate::InstallSet>, crate::Error> { Ok(Vec::new()) } }
 
+use std::collections::hash_map::DefaultHasher;
 use std::env::ArgsOs;
 use std::fmt::{self, Display, Debug, Formatter, Write as _};
 use std::ffi::{OsStr, OsString};
@@ -32,7 +33,7 @@ enum LogMode {
     Verbose,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Hash)]
 struct InstallSet {
     bin:        PathBuf,
     src:        Option<PathBuf>,
@@ -44,7 +45,7 @@ impl InstallSet {
     fn any_remote(&self) -> bool { self.installs.iter().any(|i| i.is_remote()) }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Hash)]
 struct Install {
     name:   OsString,
     flags:  Vec<InstallFlag>,
@@ -55,7 +56,7 @@ impl Install {
     fn is_remote(&self) -> bool { !self.is_local() }
 }
 
-#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq, Hash)]
 struct InstallFlag {
     flag: OsString,
     args: Vec<OsString>,
@@ -288,7 +289,13 @@ pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsS
         if set.installs.is_empty() { continue }
         assert!(any_local || any_remote);
 
-        let built = set.bin.join(".built");
+        // hash set and convert it to a string
+        let mut hasher = DefaultHasher::new();
+        set.hash(&mut hasher);
+        let hash = hasher.finish();
+
+        // use the set hash to create a cache file
+        let built = set.bin.join(format!(".built_{:x}", hash));
 
         let up_to_date = if !any_remote {
             false

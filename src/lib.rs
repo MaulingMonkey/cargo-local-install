@@ -32,7 +32,7 @@ enum LogMode {
     Verbose,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct InstallSet {
     bin:        PathBuf,
     src:        Option<PathBuf>,
@@ -44,7 +44,7 @@ impl InstallSet {
     fn any_remote(&self) -> bool { self.installs.iter().any(|i| i.is_remote()) }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Install {
     name:   OsString,
     flags:  Vec<InstallFlag>,
@@ -247,14 +247,33 @@ pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsS
         options.push(InstallFlag::new("--locked", Vec::new()));
     }
 
+    let cwd_installs = manifest::find_cwd_installs(maybe_dst_bin.clone()).map_err(|err| error!(None, "error enumerating Cargo.tomls: {}", err))?;
+
     let mut installs = if crates.is_empty() {
-        manifest::find_cwd_installs(maybe_dst_bin.clone()).map_err(|err| error!(None, "error enumerating Cargo.tomls: {}", err))?
+        cwd_installs
     } else {
-        vec![InstallSet {
-            bin:        maybe_dst_bin.clone().unwrap_or_else(|| PathBuf::from("bin")),
-            src:        None,
-            installs:   crates.into_iter().map(|c| Install { name: c, flags: vec![] }).collect(),
-        }]
+        let mut install_sets = Vec::new();
+
+        for krate in crates {
+            // if found in cwd_installs, use that
+            if let Some((set, install)) = cwd_installs.iter().find_map(|set| {
+                set.installs.iter().filter(|i| i.name == krate).next().map(|install| (set, install))
+            }) {
+                let mut singular_set = set.clone();
+                singular_set.installs = vec![install.clone()];
+
+                install_sets.push(singular_set.clone());
+            } else {
+                // otherwise, only use the crate name
+                install_sets.push(InstallSet {
+                    bin:        maybe_dst_bin.clone().unwrap_or_else(|| PathBuf::from("bin")),
+                    src:        None,
+                    installs:   vec![Install { name: krate, flags: vec![] }],
+                });
+            }
+        }
+
+        install_sets
     };
 
     if installs.is_empty() {

@@ -4,6 +4,7 @@
 #[cfg(    feature = "manifest") ] mod manifest;
 #[cfg(not(feature = "manifest"))] mod manifest { pub(super) fn find_cwd_installs(_maybe_dst_bin: Option<std::path::PathBuf>) -> Result<Vec<crate::InstallSet>, crate::Error> { Ok(Vec::new()) } }
 
+use std::collections::hash_map::DefaultHasher;
 use std::env::ArgsOs;
 use std::fmt::{self, Display, Debug, Formatter, Write as _};
 use std::ffi::{OsStr, OsString};
@@ -32,7 +33,7 @@ enum LogMode {
     Verbose,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Hash)]
 struct InstallSet {
     bin:        PathBuf,
     src:        Option<PathBuf>,
@@ -44,7 +45,7 @@ impl InstallSet {
     fn any_remote(&self) -> bool { self.installs.iter().any(|i| i.is_remote()) }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Hash)]
 struct Install {
     name:   OsString,
     flags:  Vec<InstallFlag>,
@@ -55,7 +56,7 @@ impl Install {
     fn is_remote(&self) -> bool { !self.is_local() }
 }
 
-#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq, Hash)]
 struct InstallFlag {
     flag: OsString,
     args: Vec<OsString>,
@@ -288,13 +289,30 @@ pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsS
         if set.installs.is_empty() { continue }
         assert!(any_local || any_remote);
 
-        let built = set.bin.join(".built");
+        let cache_path = {
+            // hash set and convert it to a string
+            let mut hasher = DefaultHasher::new();
+            set.hash(&mut hasher);
+            let hash = hasher.finish();
+
+            // use the set hash to create a cache file
+            let cache_name = format!(
+                "built-{}-{:x}",
+                set.installs
+                    .iter()
+                    .map(|install| install.name.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("-"),
+                hash
+            );
+            set.bin.join(".cache").join(cache_name)
+        };
 
         let up_to_date = if !any_remote {
             false
         } else if let Some(src) = set.src.as_ref() {
             let src_mod = src.metadata().ok().and_then(|m| m.modified().ok());
-            let built_mod = built.metadata().ok().and_then(|m| m.modified().ok());
+            let built_mod = cache_path.metadata().ok().and_then(|m| m.modified().ok());
 
             let up_to_date = match (src_mod, built_mod) {
                 (Some(src), Some(built))    => src < built,
@@ -326,7 +344,8 @@ pub fn run_from_strs<Args: Iterator<Item = Arg>, Arg: Into<OsString> + AsRef<OsS
             first_install = false;
         }
         if any_remote && set.src.is_some() {
-            std::fs::write(&built, "").map_err(|err| error!(err, "unable to create {}: {}", built.display(), err))?;
+            std::fs::create_dir_all(cache_path.parent().expect("Has parent")).map_err(|err| error!(err, "unable to create cache directory"))?;
+            std::fs::write(&cache_path, "").map_err(|err| error!(err, "unable to create {}: {}", cache_path.display(), err))?;
         }
     }
 
